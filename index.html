@@ -486,11 +486,46 @@
     <iframe id="browserIframe" class="browser-iframe" style="display:none" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads allow-storage-access-by-user-activation" referrerpolicy="no-referrer-when-downgrade"></iframe>
   </div>
 </div>
+<!-- ═══════════ AUTH OVERLAY ═══════════ -->
+<div id="authOverlay" class="auth-overlay" style="display:none">
+  <div class="auth-card">
+    <div class="auth-header">
+      <div class="auth-icon">
+        <span data-icon="user" data-icon-size="32"></span>
+      </div>
+      <h2>Teacher Assistant</h2>
+      <p>سجل الدخول لمزامنة بياناتك</p>
+    </div>
+    
+    <!-- أضفنا form هنا -->
+    <form onsubmit="event.preventDefault(); handleAuth('login');">
+      <div class="form-field">
+        <label>البريد الإلكتروني</label>
+        <input type="email" id="authEmail" placeholder="name@example.com" dir="ltr" style="text-align:left" required>
+      </div>
+      
+      <div class="form-field">
+        <label>كلمة المرور</label>
+        <input type="password" id="authPassword" placeholder="••••••••" dir="ltr" style="text-align:left" required>
+      </div>
 
+      <div id="authError" style="display:none;color:var(--accent-red);font-size:.82rem;margin-bottom:10px;text-align:center;background:var(--danger-bg);padding:8px;border-radius:8px"></div>
+
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:20px">
+        <!-- الزر الأول أصبح type="submit" -->
+        <button type="submit" class="btn btn-primary" id="authLoginBtn">تسجيل الدخول</button>
+        <button type="button" class="btn btn-secondary" id="authSignupBtn" onclick="handleAuth('signup')">إنشاء حساب جديد</button>
+        <button type="button" class="btn btn-secondary" onclick="skipAuth()" style="background:transparent;border:none;font-size:.8rem;color:var(--text-muted)">تخطي (العمل محلياً)</button>
+      </div>
+    </form>
+    
+  </div>
+</div>
 <div id="notify" class="notification">تمت العملية!</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="data.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>
 <script>
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {

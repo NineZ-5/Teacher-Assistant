@@ -11,6 +11,23 @@ window.addEventListener('error', function(e){
   console.error('Global error:', e.error || e.message);
 });
 
+// ═══════════════ SUPABASE INIT (SAFE) ═══════════════
+let supabaseClient = null;
+try {
+  const SUPABASE_URL = 'https://peydkdmxvsfocebypva.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_O-KUuRYf4xVAhRT05CKn6Q_2GxPFcAr'; // ⚠️ ضع مفتاحك هنا
+  
+  if (window.supabase) {
+    // لاحظ أننا استخدمنا اسم المتغير الجديد هنا
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    console.log('✅ Supabase Client Initialized successfully!');
+  } else {
+    console.error('❌ Supabase library not loaded.');
+  }
+} catch (error) {
+  console.error('❌ Supabase Init Error:', error);
+}
+
 /* ═══════════════ SVG ICON SYSTEM ═══════════════ */
 function svgIcon(name, size){
   var c = SVG_ICONS[name] || '';
@@ -5316,4 +5333,101 @@ window.addEventListener('load', async function(){
     var bar = document.getElementById('errorBar');
     if(bar){ bar.style.display='block'; bar.innerHTML += '<div>❌ ' + err.message + '</div>'; }
   }
+});
+  /* ═══════════════ AUTHENTICATION LOGIC ═══════════════ */
+
+// دالة لفتح شاشة الدخول
+function showAuthOverlay() {
+  var overlay = document.getElementById('authOverlay');
+  if (overlay) overlay.style.display = 'flex';
+}
+
+// دالة للتخطي (الدخول كضيف - بدون مزامنة)
+function skipAuth() {
+  document.getElementById('authOverlay').style.display = 'none';
+  showNotify('يعمل التطبيق محلياً. لن تتم المزامنة.');
+}
+
+// دالة تسجيل الدخول / إنشاء حساب
+async function handleAuth(action) {
+  if (!supabaseClient) {
+    showNotify('خطأ في الاتصال بالسحابة');
+    return;
+  }
+
+  var email = document.getElementById('authEmail').value.trim();
+  var password = document.getElementById('authPassword').value;
+  var errorEl = document.getElementById('authError');
+  var loginBtn = document.getElementById('authLoginBtn');
+  var signupBtn = document.getElementById('authSignupBtn');
+
+  if (!email || !password) {
+    errorEl.textContent = 'يرجى إدخال البريد الإلكتروني وكلمة المرور';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  errorEl.style.display = 'none';
+  var originalText = action === 'login' ? loginBtn.innerHTML : signupBtn.innerHTML;
+  var btnToLoad = action === 'login' ? loginBtn : signupBtn;
+  
+  // تأثير التحميل
+  btnToLoad.innerHTML = '<span style="display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;margin-right:8px"></span> جاري...';
+  btnToLoad.disabled = true;
+
+  try {
+    var result;
+    if (action === 'login') {
+      result = await supabaseClient.auth.signInWithPassword({ email: email, password: password });
+    } else {
+      result = await supabaseClient.auth.signUp({ email: email, password: password });
+    }
+
+    if (result.error) throw result.error;
+
+    if (action === 'signup' && result.data.user && !result.data.session) {
+      showNotify('تم إنشاء الحساب! يرجى مراجعة بريدك لتأكيد الحساب أو سجل الدخول.');
+      btnToLoad.innerHTML = originalText;
+      btnToLoad.disabled = false;
+      return;
+    }
+
+    // نجاح الدخول
+    showNotify('✅ تم تسجيل الدخول بنجاح');
+    document.getElementById('authOverlay').style.display = 'none';
+    
+    // هنا سنقوم لاحقاً بتشغيل دالة المزامنة
+    console.log('User logged in:', result.data.user.id);
+
+  } catch (error) {
+    console.error('Auth error:', error);
+    errorEl.textContent = error.message || 'حدث خطأ أثناء المصادقة';
+    errorEl.style.display = 'block';
+    btnToLoad.innerHTML = originalText;
+    btnToLoad.disabled = false;
+  }
+}
+
+// التحقق من الجلسة عند بدء التشغيل
+async function checkSession() {
+  if (!supabaseClient) return;
+  try {
+    var { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) {
+      console.log('✅ Active session found');
+      // المستخدم مسجل دخوله بالفعل
+      document.getElementById('authOverlay').style.display = 'none';
+    } else {
+      // لا توجد جلسة، أظهر شاشة الدخول
+      showAuthOverlay();
+    }
+  } catch (e) {
+    console.error('Session check failed:', e);
+    showAuthOverlay();
+  }
+}
+
+// تشغيل فحص الجلسة بعد تحميل الصفحة
+window.addEventListener('load', function() {
+  setTimeout(checkSession, 500); // تأخير بسيط لضمان تحميل Supabase
 });

@@ -1608,3 +1608,32 @@ html, body {
   color:var(--text-muted);
   line-height:1.5;
 }
+/* ═══════════════ AUTH OVERLAY ═══════════════ */
+.auth-overlay {
+  position: fixed; inset: 0; z-index: 99999;
+  background: rgba(10, 10, 11, 0.95);
+  backdrop-filter: blur(10px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.auth-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 20px;
+  padding: 30px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  animation: modalIn 0.3s ease;
+}
+.auth-header {
+  text-align: center; margin-bottom: 24px;
+}
+.auth-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 64px; height: 64px; border-radius: 50%;
+  background: var(--primary-soft); color: var(--accent-green);
+  margin-bottom: 12px;
+}
+.auth-header h2 { margin: 0 0 6px; font-size: 1.3rem; color: var(--text-primary); }
+.auth-header p { margin: 0; font-size: 0.85rem; color: var(--text-muted); }
