@@ -5665,7 +5665,7 @@ async function downloadFromCloud() {
       .from('profiles')
       .select('settings')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
     
     if (!profileErr && profileData && profileData.settings) {
       // دمج الإعدادات السحابية مع الإعدادات المحلية الحالية
