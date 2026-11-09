@@ -1,0 +1,21 @@
+{
+  "name": "مساعد تقارير القرآن Pro",
+  "short_name": "تقارير القرآن",
+  "description": "تقارير احترافية للحصص القرآنية — يعمل offline",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0b",
+  "theme_color": "#2dd4bf",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

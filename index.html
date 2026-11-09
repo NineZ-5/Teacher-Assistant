@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="theme-teal">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0a0a0b">
+<title>مساعد تقارير القرآن - Pro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="تقارير القرآن">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+</head>
+<body>
+
+<div id="errorBar"></div>
+
+<div class="container">
+  <header>
+    <h1>مساعد تقارير القرآن <span class="pro-tag">Pro</span></h1>
+    <p class="subtitle">تقارير احترافية • Offline • مجموعات وطلاب</p>
+  </header>
+
+  <nav class="tab-nav-desktop">
+    <button class="tab-btn active" data-tab="home" onclick="switchTab('home')"><span data-icon="home" data-icon-size="18"></span><span>الرئيسية</span></button>
+    <button class="tab-btn" data-tab="lesson" onclick="switchTab('lesson')"><span data-icon="file-text" data-icon-size="18"></span><span>الحصة</span></button>
+    <button class="tab-btn" data-tab="calendar" onclick="switchTab('calendar')"><span data-icon="calendar" data-icon-size="18"></span><span>التقويم</span><span id="calendarBadge" class="pending-badge">0</span></button>
+    <button class="tab-btn" data-tab="library" onclick="switchTab('library')"><span data-icon="users" data-icon-size="18"></span><span>المجموعات والطلاب</span></button>
+    <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')"><span data-icon="settings" data-icon-size="18"></span><span>الإعدادات</span></button>
+  </nav>
+
+  <div id="lessonReminderBar" class="lesson-reminder-bar">
+    <span class="reminder-icon" data-icon="bell" data-icon-size="20"></span>
+    <div class="reminder-text" id="reminderText">—</div>
+    <div class="reminder-actions">
+      <button onclick="startFromReminder()" id="reminderOpenBtn"><span data-icon="edit-3" data-icon-size="14"></span> فتح</button>
+      <button onclick="dismissReminder()"><span data-icon="bell-off" data-icon-size="14"></span> إخفاء</button>
+    </div>
+  </div>
+
+  <main>
+    <section id="tab-home" class="tab-panel active">
+      <div class="top-bar">
+        <div class="top-bar-left">
+          <div class="greeting" id="homeGreeting"></div>
+          <div class="date-line" id="homeSubtitle"></div>
+        </div>
+        <div class="top-bar-actions">
+          <button class="avatar-btn" onclick="openInAppBrowser()" title="المتصفح">
+            <span data-icon="globe" data-icon-size="20"></span>
+          </button>
+          <button class="avatar-btn" onclick="switchTab('settings')" title="الإعدادات">
+            <span data-icon="user" data-icon-size="20"></span>
+          </button>
+        </div>
+      </div>
+      <div id="homeNowCard" style="display:none"></div>
+      <div id="homePendingCard" style="display:none"></div>
+      <div class="section-header">
+        <h3><span data-icon="calendar" data-icon-size="16"></span> حصص اليوم</h3>
+        <span class="count" id="homeTodayCount">0</span>
+      </div>
+      <div id="homeTodayLessons" class="lesson-list"></div>
+      <div class="section-header"><h3><span data-icon="bar-chart-3" data-icon-size="16"></span> ملخص سريع</h3></div>
+      <div id="homeStats" class="stats-row"></div>
+      <div class="section-header"><h3><span data-icon="zap" data-icon-size="16"></span> إجراءات سريعة</h3></div>
+      <div class="quick-actions" id="homeActions"></div>
+      <div class="section-header"><h3><span data-icon="calendar-days" data-icon-size="16"></span> الحصص القادمة (7 أيام)</h3></div>
+      <div id="homeUpcoming"></div>
+      <div class="section-header"><h3><span data-icon="list" data-icon-size="16"></span> آخر الحصص</h3></div>
+      <div id="homeRecent" class="lesson-list"></div>
+    </section>
+
+    <section id="tab-lesson" class="tab-panel">
+      <div class="lib-subtabs" style="max-width:500px;margin-bottom:20px">
+        <button class="lib-subtab active" id="subtab-btn-lesson" onclick="switchLessonSub('lesson')"><span data-icon="file-text" data-icon-size="14"></span> تقرير الحصة</button>
+        <button class="lib-subtab" id="subtab-btn-monthly" onclick="switchLessonSub('monthly')"><span data-icon="calendar" data-icon-size="14"></span> التقرير الشهري</button>
+      </div>
+
+      <div id="lesson-sub-lesson" class="lesson-grid">
+        <div class="card">
+          <div class="form-header">
+            <button class="back-btn" onclick="switchTab('home')" title="رجوع"><span data-icon="chevron-right" data-icon-size="16"></span></button>
+            <h2>تسجيل حصة</h2>
+          </div>
+          <div id="lessonLinkBar" class="lesson-link-bar">
+            <span style="font-size:.85rem;color:var(--accent-blue);font-weight:700;display:inline-flex;align-items:center;gap:6px"><span data-icon="link" data-icon-size="16"></span> رابط الحصة</span>
+            <button class="lesson-link-btn" onclick="enterCurrentLessonLink()"><span data-icon="external-link" data-icon-size="14"></span> دخول الحصة</button>
+          </div>
+          <details id="previousLessonCard" style="display:none;background:var(--card-secondary-bg);border:1px solid var(--card-border);border-radius:10px;padding:10px 14px;margin-bottom:14px">
+            <summary style="cursor:pointer;font-weight:700;color:var(--accent-blue);font-size:.88rem;display:flex;align-items:center;gap:6px"><span data-icon="file-text" data-icon-size="14"></span> التقرير السابق (اضغط للعرض)</summary>
+            <pre id="previousLessonContent" style="margin-top:10px;white-space:pre-wrap;font-family:'IBM Plex Sans Arabic',monospace;font-size:13px;line-height:1.6;max-height:300px;overflow:auto;background:var(--card-bg);padding:10px;border-radius:6px;margin-bottom:0;color:var(--text-primary)"></pre>
+          </details>
+          <div id="lessonTimerWidget" class="timer-card">
+            <div class="timer-info">
+              <span class="label" style="display:flex;align-items:center;gap:5px"><span data-icon="timer" data-icon-size="12"></span> مؤقّت الحصة</span>
+              <span id="lessonTimerDisplay" class="time">00:00:00</span>
+            </div>
+            <div class="timer-btns">
+              <button id="lessonTimerBtn" class="icon-btn primary" onclick="toggleLessonTimer()" title="بدء"><span data-icon="play" data-icon-size="16"></span></button>
+              <button id="lessonTimerStopBtn" class="icon-btn" onclick="stopLessonTimer(false)" style="display:none" title="إنهاء وحفظ"><span data-icon="square" data-icon-size="16"></span></button>
+            </div>
+          </div>
+          <div class="subjects">
+            <button type="button" class="subject-btn active" data-subject="quran" onclick="toggleSubject('quran')"><span data-icon="book-open" data-icon-size="18"></span>القرآن</button>
+            <button type="button" class="subject-btn" data-subject="arabic" onclick="toggleSubject('arabic')"><span data-icon="book" data-icon-size="18"></span>العربية</button>
+            <button type="button" class="subject-btn" data-subject="islamic" onclick="toggleSubject('islamic')"><span data-icon="bookmark" data-icon-size="18"></span>الشرعية</button>
+          </div>
+          <div class="form-field">
+            <label>اسم المجموعة</label>
+            <div class="input-with-btn">
+              <input type="text" id="groupName" placeholder="اسم المجموعة" oninput="updateLessonLinkBar()">
+              <button type="button" class="icon-btn" onclick="openGroupPicker()" title="اختيار مجموعة"><span data-icon="folder-open" data-icon-size="16"></span></button>
+            </div>
+          </div>
+          <div class="form-field">
+            <label>اسم المعلم</label>
+            <input type="text" id="teacherName" placeholder="اسم المعلم">
+          </div>
+          <div class="form-row-2">
+            <div class="form-field"><label>التاريخ</label><input type="date" id="reportDate"></div>
+            <div class="form-field"><label>رقم الحصة</label>
+             <select id="lessonOrder">
+              <option value="">رقم الحصة</option>
+              <option>الأولى</option><option>الثانية</option><option>الثالثة</option>
+              <option>الرابعة</option><option>الخامسة</option><option>السادسة</option>
+              <option>السابعة</option><option>الثامنة</option><option>التاسعة</option><option>العاشرة</option>
+              <option>الحادية عشرة</option><option>الثانية عشرة</option><option>الثالثة عشرة</option>
+              <option>الرابعة عشرة</option><option>الخامسة عشرة</option><option>السادسة عشرة</option>
+              <option>السابعة عشرة</option><option>الثامنة عشرة</option><option>التاسعة عشرة</option>
+              <option>العشرون</option>
+              <option>الحادية والعشرون</option><option>الثانية والعشرون</option><option>الثالثة والعشرون</option>
+              <option>الرابعة والعشرون</option><option>الخامسة والعشرون</option><option>السادسة والعشرون</option>
+              <option>السابعة والعشرون</option><option>الثامنة والعشرون</option><option>التاسعة والعشرون</option>
+              <option>الثلاثون</option>
+             </select>
+            </div>
+          </div>
+          <div class="form-field">
+            <label>عدد الطلاب</label>
+            <div style="display:flex;gap:10px;align-items:center">
+              <button type="button" class="btn btn-secondary" onclick="changeStudentCount(-1)" style="flex:0 0 48px;font-size:1.4rem;padding:0;height:42px">−</button>
+              <input type="number" id="studentCountInput" value="1" min="1" readonly style="text-align:center;font-weight:700;font-size:1.1rem;flex:1;height:42px">
+              <button type="button" class="btn btn-secondary" onclick="changeStudentCount(1)" style="flex:0 0 48px;font-size:1.4rem;padding:0;height:42px">+</button>
+            </div>
+          </div>
+          <div id="studentsContainer"></div>
+          <div id="attachmentsSection" style="margin-top:14px;margin-bottom:14px;background:var(--card-secondary-bg);border:1px solid var(--card-border);border-radius:12px;padding:14px">
+            <h3 style="margin:0 0 10px;font-size:.92rem;display:flex;justify-content:space-between;align-items:center;color:var(--text-primary)">
+              <span style="display:flex;align-items:center;gap:6px"><span data-icon="paperclip" data-icon-size="14"></span> المرفقات</span>
+            </h3>
+          <div id="attachmentsList" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px"></div>
+            <input type="file" id="attachmentInput" multiple accept="image/*,application/pdf" style="display:none" onchange="handleAttachmentUpload(event)">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('attachmentInput').click()" style="width:auto">
+              <span data-icon="plus" data-icon-size="12"></span> إضافة صورة أو PDF
+            </button>
+          </div>
+          <div id="activeStaticTextsCard" style="display:none;background:var(--card-secondary-bg);border:1px solid var(--card-border);border-radius:12px;padding:14px;margin-top:14px;margin-bottom:14px">
+            <h3 style="margin:0 0 6px;font-size:.92rem;display:flex;justify-content:space-between;align-items:center;color:var(--text-primary)">
+              <span style="display:flex;align-items:center;gap:6px"><span data-icon="pin" data-icon-size="14"></span> نصوص ثابتة نشطة</span>
+              <button class="btn btn-secondary btn-sm" onclick="renderActiveStaticTexts()" style="padding:4px 10px;font-size:.72rem" title="تحديث"><span data-icon="refresh" data-icon-size="12"></span></button>
+            </h3>
+            <p style="font-size:.75rem;color:var(--text-muted);margin:0 0 10px">ألغِ التفعيل لإخفاء نص في هذه الحصة فقط.</p>
+            <div id="activeStaticTextsList"></div>
+          </div>
+          <div class="form-field">
+            <label>مدة الحصة (بالدقائق)</label>
+            <input type="number" id="duration" placeholder="مدة الحصة (بالدقائق)">
+          </div>
+          <div class="action-buttons">
+            <button class="btn-lg primary" onclick="generateReport()"><span data-icon="file-text" data-icon-size="16"></span> إنشاء التقرير</button>
+            <button class="btn-lg secondary" onclick="saveSession()"><span data-icon="save" data-icon-size="16"></span> حفظ</button>
+          </div>
+          <button class="btn btn-secondary mobile-only" onclick="openReportSheet()" style="width:100%;margin-bottom:10px"><span data-icon="file-text" data-icon-size="14"></span> عرض التقرير</button>
+          <button class="btn btn-secondary" onclick="clearForm()" style="width:100%;margin-bottom:10px"><span data-icon="refresh" data-icon-size="14"></span> بدء حصة جديدة</button>
+        </div>
+
+        <div class="report-side sticky-side">
+          <h2 style="display:flex;align-items:center;gap:6px"><span data-icon="file-text" data-icon-size="18"></span> التقرير النهائي</h2>
+          <textarea id="output" class="report-area" placeholder="سيظهر التقرير هنا..."></textarea>
+          <p style="font-size:.72rem;color:var(--text-muted);margin:-4px 0 10px">يمكنك التعديل قبل النسخ أو الحفظ</p>
+          <button class="btn btn-copy" onclick="copyReport()" style="width:100%;height:44px;margin-bottom:10px"><span data-icon="copy" data-icon-size="14"></span> نسخ النص</button>
+          <button class="btn btn-primary" onclick="shareReportWhatsApp()" style="width:100%;height:44px;margin:0 0 10px"><span data-icon="smartphone" data-icon-size="14"></span> إرسال واتساب</button>
+          <button class="btn btn-word" onclick="exportToWord()" style="width:100%;height:44px"><span data-icon="file-word" data-icon-size="14"></span> تحميل Word</button>
+        </div>
+      </div>
+
+      <div id="lesson-sub-monthly" style="display:none">
+        <div class="card">
+          <h2 style="margin:0 0 18px;font-size:1.1rem;color:var(--text-primary);display:flex;align-items:center;gap:8px"><span data-icon="calendar" data-icon-size="18"></span> توليد تقرير شهري جديد</h2>
+          <div class="form-row-2">
+            <div class="form-field"><label>المجموعة</label><select id="monthlyGroupSelect"></select></div>
+            <div class="form-row-2" style="margin:0">
+              <div class="form-field"><label>الشهر</label><select id="monthlyMonthSelect"></select></div>
+              <div class="form-field"><label>السنة</label><input type="number" id="monthlyYearInput"></div>
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="generateMonthlyDraftFromTab()"><span data-icon="refresh" data-icon-size="14"></span> توليد المسودة من الحصص</button>
+          <div id="monthlyTabDraftContainer" style="display:none;margin-top:20px">
+            <span class="section-title">مسودة التقرير (يمكنك التعديل عليها)</span>
+            <textarea id="monthlyTabDraft" style="min-height:350px;height:45vh;resize:vertical;font-family:'IBM Plex Sans Arabic',monospace;line-height:1.7;font-size:.86rem"></textarea>
+            <button class="btn btn-save" onclick="saveMonthlyDraftFromTab()" style="margin-top:12px"><span data-icon="save" data-icon-size="14"></span> حفظ التقرير الشهري</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-calendar" class="tab-panel">
+      <div class="card">
+        <div class="cal-view-switcher">
+          <button type="button" class="cal-view-btn active" data-view="monthly" onclick="switchCalendarView('monthly')"><span data-icon="calendar" data-icon-size="14"></span> شهري</button>
+          <button type="button" class="cal-view-btn" data-view="weekly" onclick="switchCalendarView('weekly')"><span data-icon="calendar-days" data-icon-size="14"></span> أسبوعي</button>
+          <button type="button" class="cal-view-btn" data-view="list" onclick="switchCalendarView('list')"><span data-icon="list" data-icon-size="14"></span> قائمة</button>
+        </div>
+        <div class="cal-nav">
+          <button class="btn btn-secondary btn-sm" onclick="calendarNavigate(-1)"><span data-icon="chevron-right" data-icon-size="12"></span> السابق</button>
+          <h2 id="calendarTitle">—</h2>
+          <button class="btn btn-secondary btn-sm" onclick="calendarNavigate(1)">التالي <span data-icon="chevron-left" data-icon-size="12"></span></button>
+        </div>
+        <div id="calendarBody"></div>
+      </div>
+    </section>
+
+    <section id="tab-library" class="tab-panel">
+      <div class="card">
+        <div class="lib-subtabs">
+          <button class="lib-subtab active" data-subtab="groups" onclick="switchLibSub('groups')"><span data-icon="folder-open" data-icon-size="14"></span> المجموعات</button>
+          <button class="lib-subtab" data-subtab="students" onclick="switchLibSub('students')"><span data-icon="user" data-icon-size="14"></span> الطلاب</button>
+          <button class="lib-subtab" data-subtab="search" onclick="switchLibSub('search')"><span data-icon="search" data-icon-size="14"></span> بحث</button>
+        </div>
+        <div id="lib-groups-view">
+          <div class="lib-toolbar">
+            <h2 style="display:flex;align-items:center;gap:6px"><span data-icon="folder-open" data-icon-size="18"></span> المجموعات</h2>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <input type="text" id="groupSearch" placeholder="بحث" oninput="renderGroupsList()" style="width:130px">
+              <button class="btn btn-secondary" onclick="document.getElementById('folderInput').click()" style="font-size:.8rem;padding:8px 12px;white-space:nowrap"><span data-icon="folder-open" data-icon-size="12"></span> استيراد مجلد</button>
+              <button class="btn btn-secondary" onclick="openBulkImport()" style="font-size:.8rem;padding:8px 12px;white-space:nowrap"><span data-icon="file-text" data-icon-size="12"></span> استيراد نصوص</button>
+              <button class="btn btn-primary" onclick="addGroupPrompt()" style="width:auto;margin:0;font-size:.85rem;padding:9px 14px;white-space:nowrap"><span data-icon="plus" data-icon-size="14"></span> مجموعة</button>
+              <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none" onchange="handleFolderImport(event)">
+            </div>
+          </div>
+          <div id="groupsList" class="lib-list"></div>
+          <div id="groupDetail" style="display:none"></div>
+        </div>
+        <div id="lib-students-view" style="display:none">
+          <div class="lib-toolbar">
+            <h2 style="display:flex;align-items:center;gap:6px"><span data-icon="user" data-icon-size="18"></span> الطلاب</h2>
+            <input type="text" id="studentSearch" placeholder="بحث بالاسم" oninput="renderStudentsList()" style="width:160px">
+          </div>
+          <div id="studentsList" class="lib-list"></div>
+          <div id="studentDetail" style="display:none"></div>
+        </div>
+        <div id="lib-search-view" style="display:none">
+          <div class="lib-toolbar"><h2 style="display:flex;align-items:center;gap:6px"><span data-icon="search" data-icon-size="18"></span> البحث في التقارير</h2></div>
+          <div class="form-field">
+            <input type="text" id="searchInput" placeholder="ابحث في نصوص التقارير المحفوظة..." oninput="doSearch()">
+          </div>
+          <div id="searchResults"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="tab-panel">
+      <div class="card">
+        <h2 style="margin:0 0 20px;font-size:1.1rem;color:var(--text-primary);display:flex;align-items:center;gap:8px"><span data-icon="settings" data-icon-size="18"></span> الإعدادات</h2>
+
+        <h3 class="settings-h"><span data-icon="user" data-icon-size="16"></span> الملف الشخصي</h3>
+        <div class="form-field">
+          <label>اسم المعلم الافتراضي</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input type="text" id="settingsTeacher" placeholder="اسم المعلم" style="flex:1;min-width:180px">
+            <button class="btn btn-secondary" onclick="saveTeacherDefault()" style="padding:10px 20px">حفظ</button>
+          </div>
+        </div>
+        <div class="form-field" style="margin-top:14px">
+          <label>توقيتك المحلي (لحساب توقيت الحصص)</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input type="text" id="settingsTimezone" readonly placeholder="اضغط للاختيار" onclick="openTimezonePicker(function(tz){document.getElementById('settingsTimezone').value=tz;})" style="flex:1;min-width:180px;cursor:pointer">
+            <button class="btn btn-secondary" onclick="detectTimezone()" style="padding:10px 14px" title="اكتشاف تلقائي"><span data-icon="map-pin" data-icon-size="14"></span></button>
+            <button class="btn btn-secondary" onclick="openTimezonePicker(function(tz){document.getElementById('settingsTimezone').value=tz;})" style="padding:10px 14px" title="اختيار"><span data-icon="globe" data-icon-size="14"></span></button>
+            <button class="btn btn-secondary" onclick="saveTeacherTimezone()" style="padding:10px 20px">حفظ</button>
+          </div>
+        </div>
+
+        <h3 class="settings-h"><span data-icon="star" data-icon-size="16"></span> مواقعك المفضلة</h3>
+        <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 12px">تظهر داخل المتصفح المدمج — اضغط لفتحها.</p>
+        <div id="settingsFavsGrid" class="settings-favs-grid"></div>
+        <button class="btn btn-secondary btn-sm" onclick="promptAddFavorite()" style="width:auto;margin-top:8px"><span data-icon="plus" data-icon-size="12"></span> إضافة موقع</button>
+
+        <h3 class="settings-h"><span data-icon="palette" data-icon-size="16"></span> التصميم</h3>
+        <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 12px">اختر التصميم الذي يريحك — التبديل فوري.</p>
+        <div class="theme-grid">
+          <button class="theme-card" data-theme="mint" onclick="changeDesignTheme('mint')">
+            <div class="theme-preview" style="background:#fafafa;border:1px solid #e4e4e7"><div class="tp-side" style="background:#fff"><div style="background:#0d9488"></div><div style="background:#d4d4d8"></div><div style="background:#d4d4d8"></div></div><div class="tp-main" style="background:#f4f4f5"><div style="background:#0d9488"></div><div style="background:#e4e4e7"></div><div style="background:#e4e4e7"></div></div></div>
+            <div class="theme-name"><span class="theme-dot" style="background:#0d9488"></span>Mint Light</div><div class="theme-desc">فاتح • تركواز هادئ</div>
+          </button>
+          <button class="theme-card" data-theme="teal" onclick="changeDesignTheme('teal')">
+            <div class="theme-preview" style="background:#0a0a0b;border:1px solid #26262a"><div class="tp-side" style="background:#141416"><div style="background:#2dd4bf"></div><div style="background:#3f3f46"></div><div style="background:#3f3f46"></div></div><div class="tp-main" style="background:#1c1c1f"><div style="background:#2dd4bf"></div><div style="background:#26262a"></div><div style="background:#26262a"></div></div></div>
+            <div class="theme-name"><span class="theme-dot" style="background:#2dd4bf"></span>Deep Teal</div><div class="theme-desc">داكن • تركواز مشعّ</div>
+          </button>
+          <button class="theme-card" data-theme="ocean" onclick="changeDesignTheme('ocean')">
+            <div class="theme-preview" style="background:#f8fafc;border:1px solid #e2e8f0"><div class="tp-side" style="background:#fff"><div style="background:#0891b2"></div><div style="background:#cbd5e1"></div><div style="background:#cbd5e1"></div></div><div class="tp-main" style="background:#f1f5f9"><div style="background:#0891b2"></div><div style="background:#e2e8f0"></div><div style="background:#e2e8f0"></div></div></div>
+            <div class="theme-name"><span class="theme-dot" style="background:#0891b2"></span>Ocean Clean</div><div class="theme-desc">فاتح • ساين أعمق</div>
+          </button>
+          <button class="theme-card" data-theme="indigo" onclick="changeDesignTheme('indigo')">
+            <div class="theme-preview" style="background:#0a0a0f;border:1px solid #272730"><div class="tp-side" style="background:#16161d"><div style="background:#818cf8"></div><div style="background:#3f3f52"></div><div style="background:#3f3f52"></div></div><div class="tp-main" style="background:#1e1e28"><div style="background:#818cf8"></div><div style="background:#272730"></div><div style="background:#272730"></div></div></div>
+            <div class="theme-name"><span class="theme-dot" style="background:#818cf8"></span>Royal Indigo</div><div class="theme-desc">داكن • بنفسجي-نيلي</div>
+          </button>
+          <button class="theme-card" data-theme="ember" onclick="changeDesignTheme('ember')">
+            <div class="theme-preview" style="background:#0f0c0a;border:1px solid #2e241e"><div class="tp-side" style="background:#1a1512"><div style="background:#fb923c"></div><div style="background:#4a3a2e"></div><div style="background:#4a3a2e"></div></div><div class="tp-main" style="background:#241c17"><div style="background:#fb923c"></div><div style="background:#2e241e"></div><div style="background:#2e241e"></div></div></div>
+            <div class="theme-name"><span class="theme-dot" style="background:#fb923c"></span>Warm Ember</div><div class="theme-desc">داكن • برتقالي دافئ</div>
+          </button>
+        </div>
+
+        <h3 class="settings-h"><span data-icon="archive" data-icon-size="16"></span> مساحة التخزين</h3>
+        <div id="storageInfo" style="font-size:.85rem;line-height:1.8;padding:12px;background:var(--card-secondary-bg);border-radius:8px;color:var(--text-secondary)">
+          جارٍ الحساب...
+        </div>
+                <h3 class="settings-h"><span data-icon="archive" data-icon-size="16"></span> النسخة الكاملة (مع المرفقات)</h3>
+        <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 10px;line-height:1.6">
+          تصدير كل شيء في ملف ZIP واحد: التقارير + الصور + ملفات PDF.<br>
+          <b>مهم:</b> هذه هي النسخة الآمنة للاحتفاظ بكل بياناتك.
+        </p>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="exportFullBackup()" style="flex:1;min-width:200px">
+            <span data-icon="download" data-icon-size="14"></span> تصدير ZIP كامل
+          </button>
+          <button class="btn btn-copy" onclick="document.getElementById('fullBackupFile').click()" style="flex:1;min-width:200px">
+            <span data-icon="upload" data-icon-size="14"></span> استيراد ZIP كامل
+          </button>
+          <input type="file" id="fullBackupFile" accept=".zip" onchange="importFullBackup(event)" style="display:none">
+        </div>
+
+        <h3 class="settings-h"><span data-icon="save" data-icon-size="16"></span> البيانات</h3>
+        <div class="btn-row">
+          <button class="btn btn-copy" onclick="exportBackup()" style="flex:1;min-width:160px;padding:12px 20px"><span data-icon="archive" data-icon-size="14"></span> تصدير نسخة احتياطية</button>
+          <button class="btn btn-word" onclick="document.getElementById('backupFile').click()" style="flex:1;min-width:160px;padding:12px 20px"><span data-icon="download" data-icon-size="14"></span> استيراد نسخة</button>
+          <input type="file" id="backupFile" accept=".json" onchange="importBackup(event)" style="display:none">
+          <button class="btn btn-danger" onclick="resetAllData()" style="flex:1;min-width:160px;padding:12px 20px"><span data-icon="trash-2" data-icon-size="14"></span> مسح كل البيانات</button>
+        </div>
+        <div class="last-backup-info" id="lastBackupInfo"></div>
+
+        <h3 class="settings-h"><span data-icon="bell" data-icon-size="16"></span> التنبيهات</h3>
+        <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifEnabled" onchange="saveNotificationSettings()"><span>تفعيل شريط التنبيه</span></label></div>
+        <div class="form-field"><label>التنبيه قبل الحصة بـ</label><select id="notifMinutes" onchange="saveNotificationSettings()"><option value="5">٥ دقائق</option><option value="10">١٠ دقائق</option><option value="15">١٥ دقيقة</option><option value="30">٣٠ دقيقة</option><option value="60">ساعة</option><option value="120">ساعتان</option></select></div>
+        <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifSound" onchange="saveNotificationSettings()"><span><span data-icon="volume-2" data-icon-size="14"></span> تنبيه صوتي</span></label></div>
+        <div class="form-field"><label>نوع النغمة</label><select id="notifSoundType" onchange="saveNotificationSettings()"><option value="1">نغمة ١</option><option value="2">نغمة ٢</option><option value="3">نغمة ٣</option></select></div>
+        <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifRepeat" onchange="saveNotificationSettings()"><span><span data-icon="refresh" data-icon-size="14"></span> تكرار الصوت</span></label></div>
+        <div class="form-field"><label>كل كم ثانية</label><select id="notifRepeatInterval" onchange="saveNotificationSettings()"><option value="15">١٥ ثانية</option><option value="30">٣٠ ثانية</option><option value="60">دقيقة</option></select></div>
+        <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifVibrate" onchange="saveNotificationSettings()"><span><span data-icon="vibrate" data-icon-size="14"></span> اهتزاز</span></label></div>
+        <div class="form-field"><label>نمط الاهتزاز</label><select id="notifVibratePattern" onchange="saveNotificationSettings()"><option value="short">قصير</option><option value="long">طويل</option><option value="off">إيقاف</option></select></div>
+        <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifSystem" onchange="saveNotificationSettings()"><span><span data-icon="message-square" data-icon-size="14"></span> إشعارات النظام</span></label><button class="btn btn-secondary btn-sm" onclick="requestNotifPermission()" style="margin-top:8px;width:auto;padding:8px 14px">تفعيل الإذن</button></div>
+        <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="quietEnabled" onchange="saveNotificationSettings()"><span><span data-icon="moon" data-icon-size="14"></span> ساعات الصمت</span></label></div>
+        <div class="form-row-2">
+          <div class="form-field"><label>من</label><input type="time" id="quietFrom" value="23:00" onchange="saveNotificationSettings()"></div>
+          <div class="form-field"><label>إلى</label><input type="time" id="quietTo" value="07:00" onchange="saveNotificationSettings()"></div>
+        </div>
+        <div class="btn-row"><button class="btn btn-secondary" onclick="testAlarmSound()" style="flex:1;min-width:120px"><span data-icon="volume-2" data-icon-size="14"></span> تجربة الصوت</button></div>
+
+        <h3 class="settings-h"><span data-icon="building-2" data-icon-size="16"></span> أماكن العمل</h3>
+        <div id="workLocationsList" style="margin-bottom:10px"></div>
+        <button class="btn btn-secondary btn-sm" onclick="addWorkLocationPrompt()" style="width:auto"><span data-icon="plus" data-icon-size="12"></span> إضافة مكان</button>
+
+        <h3 class="settings-h"><span data-icon="timer" data-icon-size="16"></span> ساعات الحصص</h3>
+        <button class="btn btn-primary" onclick="showWorkStatsModal(event)" style="width:100%"><span data-icon="bar-chart-3" data-icon-size="14"></span> عرض الإحصائيات والتفاصيل</button>
+
+        <h3 class="settings-h"><span data-icon="calendar" data-icon-size="16"></span> تصدير التقويم (.ics)</h3>
+        <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 10px;line-height:1.6">صدّر حصصك إلى ملف <code style="background:var(--card-secondary-bg);padding:2px 6px;border-radius:4px">.ics</code>.</p>
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="exportICS(1)" style="flex:1;min-width:100px">شهر</button>
+          <button class="btn btn-primary" onclick="exportICS(3)" style="flex:1;min-width:100px;margin:0">٣ أشهر</button>
+          <button class="btn btn-secondary" onclick="exportICS(12)" style="flex:1;min-width:100px">سنة</button>
+        </div>
+
+        <h3 class="settings-h"><span data-icon="archive" data-icon-size="16"></span> سجل النسخ الاحتياطية</h3>
+        <div id="backupLogContainer"></div>
+        <button class="btn btn-secondary" onclick="clearBackupLog()" style="font-size:.8rem;padding:8px 14px;margin-top:10px;width:auto"><span data-icon="trash-2" data-icon-size="12"></span> مسح السجل</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<nav class="tab-nav-mobile">
+  <button class="tab-btn active" data-tab="home" onclick="switchTab('home')"><div class="nav-icon-wrap"><span data-icon="home" data-icon-size="20"></span></div><span>الرئيسية</span></button>
+  <button class="tab-btn" data-tab="lesson" onclick="switchTab('lesson')"><div class="nav-icon-wrap"><span data-icon="file-text" data-icon-size="20"></span></div><span>الحصة</span></button>
+  <button class="tab-btn" data-tab="calendar" onclick="switchTab('calendar')"><div class="nav-icon-wrap"><span data-icon="calendar" data-icon-size="20"></span></div><span>التقويم</span><span id="calendarBadgeMobile" class="pending-badge">0</span></button>
+  <button class="tab-btn" data-tab="library" onclick="switchTab('library')"><div class="nav-icon-wrap"><span data-icon="users" data-icon-size="20"></span></div><span>المكتبة</span></button>
+  <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')"><div class="nav-icon-wrap"><span data-icon="settings" data-icon-size="20"></span></div><span>الإعدادات</span></button>
+</nav>
+
+<div class="bottom-sheet-overlay" id="sheetOverlay" onclick="closeReportSheet()"></div>
+<div class="bottom-sheet" id="reportSheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-header"><h3 style="display:flex;align-items:center;gap:6px"><span data-icon="file-text" data-icon-size="16"></span> التقرير</h3><button class="sheet-close" onclick="closeReportSheet()">×</button></div>
+  <div class="sheet-body">
+    <textarea id="sheetOutput" placeholder="سيظهر التقرير هنا..."></textarea>
+    <p style="font-size:.72rem;color:var(--text-muted);margin:8px 0 0;text-align:center">يمكنك التعديل على النص مباشرة</p>
+  </div>
+  <div class="sheet-actions">
+    <button class="btn btn-copy" onclick="copyReport()"><span data-icon="copy" data-icon-size="14"></span> نسخ النص</button>
+    <button class="btn btn-primary" onclick="shareReportWhatsApp()" style="margin:0"><span data-icon="smartphone" data-icon-size="14"></span> إرسال واتساب</button>
+    <button class="btn btn-word" onclick="exportToWord()"><span data-icon="file-word" data-icon-size="14"></span> تحميل Word</button>
+    <button class="btn btn-save" onclick="saveSession();closeReportSheet();" style="margin:0"><span data-icon="save" data-icon-size="14"></span> حفظ الحصة</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="genericModal">
+  <div class="modal">
+    <div class="modal-header"><h3 id="genericModalTitle"></h3><button class="modal-close" onclick="closeGenericModal()">×</button></div>
+    <div class="modal-body" id="genericModalBody"></div>
+    <div class="modal-footer" id="genericModalFooter"></div>
+  </div>
+</div>
+
+<!-- ═══════════ IN-APP BROWSER OVERLAY ═══════════ -->
+<div id="browserOverlay" class="browser-overlay" style="display:none">
+  <div class="browser-tabs-bar">
+    <div class="browser-tabs-scroll" id="browserTabsScroll"></div>
+    <button class="browser-tab-new" onclick="browserNewTab()" title="تبويب جديد">
+      <span data-icon="plus" data-icon-size="16"></span>
+    </button>
+  </div>
+  <div class="browser-bar">
+    <div class="browser-nav">
+      <button class="browser-btn" onclick="browserBack()" title="رجوع" id="browserBackBtn"><span data-icon="arrow-right" data-icon-size="16"></span></button>
+      <button class="browser-btn" onclick="browserForward()" title="تقدم" id="browserForwardBtn"><span data-icon="arrow-left" data-icon-size="16"></span></button>
+      <button class="browser-btn" onclick="browserReload()" title="تحديث"><span data-icon="refresh" data-icon-size="16"></span></button>
+    </div>
+    <div class="browser-url-wrap">
+      <span class="browser-url-icon" data-icon="globe" data-icon-size="14"></span>
+      <input type="text" id="browserUrlInput" class="browser-url-input" placeholder="ابحث أو اكتب رابطًا..." onkeydown="if(event.key==='Enter'){event.preventDefault();browserNavigate(this.value);}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div class="browser-actions">
+      <button class="browser-btn" id="browserFavBtn" onclick="toggleBrowserFavorite()" title="إضافة للمفضلة"><span data-icon="star" data-icon-size="16"></span></button>
+      <button class="browser-btn" onclick="closeBrowser()" title="إغلاق"><span data-icon="x" data-icon-size="16"></span></button>
+    </div>
+  </div>
+  <div class="browser-bookmarks-bar" id="browserBookmarksBar" style="display:none"></div>
+  <div class="browser-body" id="browserBody">
+    <div id="browserFavoritesView" class="browser-favs-view">
+      <div class="browser-favs-header">
+        <h2><span data-icon="star" data-icon-size="20"></span> المواقع المفضلة</h2>
+        <button class="browser-btn-small" onclick="promptAddFavorite()"><span data-icon="plus" data-icon-size="14"></span> إضافة موقع</button>
+      </div>
+      <div id="browserFavsGrid" class="browser-favs-grid"></div>
+    </div>
+    <div id="browserFallback" class="browser-fallback" style="display:none">
+      <div class="browser-fallback-content">
+        <span data-icon="alert-triangle" data-icon-size="48" style="color:var(--accent-amber);display:block;text-align:center"></span>
+        <h3>هذا الموقع لا يسمح بالعرض داخل التطبيق</h3>
+        <p>يمكنك فتحه في المتصفح الخارجي.</p>
+        <div class="browser-fallback-actions">
+          <button class="btn btn-primary" onclick="browserOpenExternal()" style="width:auto;margin:0"><span data-icon="external-link" data-icon-size="14"></span> فتح خارجيًا</button>
+          <button class="btn btn-secondary" onclick="browserGoHome()">رجوع للمفضلة</button>
+        </div>
+      </div>
+    </div>
+    <iframe id="browserIframe" class="browser-iframe" style="display:none" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads allow-storage-access-by-user-activation" referrerpolicy="no-referrer-when-downgrade"></iframe>
+  </div>
+</div>
+
+<div id="notify" class="notification">تمت العملية!</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('./service-worker.js').catch(function(err) {
+      console.warn('Service Worker registration failed:', err);
+    });
+  });
+}
+</script>
+</body>
+</html>
