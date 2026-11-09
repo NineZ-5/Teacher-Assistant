@@ -1,7 +1,55 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#0a0a0b"/>
-  <rect x="48" y="48" width="416" height="416" rx="72" fill="#2dd4bf"/>
-  <path d="M128 176 Q128 152 152 152 L240 152 Q264 152 264 176 L264 380 Q264 360 240 360 L128 360 Z" fill="#0a0a0b"/>
-  <path d="M384 176 Q384 152 360 152 L272 152 Q264 152 264 176 L264 380 Q264 360 272 360 L360 360 Q384 360 384 380 Z" fill="#0a0a0b"/>
-  <path d="M264 176 L264 380" stroke="#2dd4bf" stroke-width="8"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- تدرج الخلفية الفاخر -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    
+    <!-- تدرج أيقونة التوركواز -->
+    <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5eead4" />
+      <stop offset="100%" stop-color="#0d9488" />
+    </linearGradient>
+    
+    <!-- تأثير الظل -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- خلفية مربعة بحواف ناعمة حديثة (iOS / Android style) -->
+  <rect width="512" height="512" rx="116" fill="url(#bgGrad)" />
+  
+  <!-- إطار خارجي رفيع وجميل -->
+  <rect x="16" y="16" width="480" height="480" rx="100" fill="none" stroke="#2dd4bf" stroke-width="4" opacity="0.15" />
+
+  <!-- العناصر الفنية (لوحة البيانات والقلم الذكي) -->
+  <g filter="url(#glow)">
+    <!-- ورقة التقرير الخلفية -->
+    <rect x="136" y="116" width="180" height="230" rx="24" fill="url(#iconGrad)" opacity="0.2" />
+    
+    <!-- ورقة التقرير الرئيسية -->
+    <rect x="156" y="140" width="200" height="250" rx="20" fill="#1e293b" stroke="url(#iconGrad)" stroke-width="12" />
+    
+    <!-- خطوط المحتوى داخل التقرير -->
+    <rect x="196" y="180" width="120" height="16" rx="8" fill="#5eead4" opacity="0.9" />
+    <rect x="196" y="224" width="80" height="12" rx="6" fill="#2dd4bf" opacity="0.6" />
+    <rect x="196" y="256" width="100" height="12" rx="6" fill="#2dd4bf" opacity="0.6" />
+    
+    <!-- علامة الصح (الانجاز) -->
+    <circle cx="212" cy="316" r="20" fill="#2dd4bf" opacity="0.2" />
+    <path d="M202 316l8 8 16-18" fill="none" stroke="#5eead4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+    
+    <!-- قلم ذكي بارز وعصري -->
+    <g transform="translate(260, 210) rotate(-45)">
+      <!-- جسم القلم -->
+      <path d="M0 0h36v120H0z" fill="url(#iconGrad)" />
+      <!-- سن القلم -->
+      <path d="M0 120l18 36 18-36z" fill="#f8fafc" />
+      <!-- تفاصيل القلم -->
+      <rect x="6" y="20" width="24" height="16" rx="4" fill="#0f172a" opacity="0.4" />
+    </g>
+  </g>
 </svg>
