@@ -5371,7 +5371,6 @@ async function handleAuth(action) {
   var originalText = action === 'login' ? loginBtn.innerHTML : signupBtn.innerHTML;
   var btnToLoad = action === 'login' ? loginBtn : signupBtn;
   
-  // تأثير التحميل
   btnToLoad.innerHTML = '<span style="display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;margin-right:8px"></span> جاري...';
   btnToLoad.disabled = true;
 
@@ -5385,24 +5384,37 @@ async function handleAuth(action) {
 
     if (result.error) throw result.error;
 
+    // ═══ حالة: إنشاء حساب ناجح بدون جلسة (تأكيد البريد لا يزال مفعلاً) ═══
     if (action === 'signup' && result.data.user && !result.data.session) {
-      showNotify('تم إنشاء الحساب! يرجى مراجعة بريدك لتأكيد الحساب أو سجل الدخول.');
-      btnToLoad.innerHTML = originalText;
-      btnToLoad.disabled = false;
+      showNotify('📧 تم إنشاء الحساب! تحقق من بريدك الإلكتروني لتأكيد الحساب.');
+      errorEl.innerHTML = 'تم إنشاء الحساب ولكن يحتاج إلى تأكيد. راجع بريدك الإلكتروني.';
+      errorEl.style.display = 'block';
       return;
     }
 
-    // نجاح الدخول
+    // ═══ حالة: نجاح الدخول أو إنشاء حساب بجلسة ═══
     showNotify('✅ تم تسجيل الدخول بنجاح');
     document.getElementById('authOverlay').style.display = 'none';
-    
-    // هنا سنقوم لاحقاً بتشغيل دالة المزامنة
-    console.log('User logged in:', result.data.user.id);
+    await getCurrentUser(); // جلب المستخدم للمزامنة
 
   } catch (error) {
     console.error('Auth error:', error);
-    errorEl.textContent = error.message || 'حدث خطأ أثناء المصادقة';
+    var msg = error.message || 'حدث خطأ أثناء المصادقة';
+
+    // ═══ ترجمة الأخطاء الشائعة ═══
+    if (msg.includes('Email not confirmed')) {
+      msg = 'البريد الإلكتروني غير مؤكد. يرجى مراجعة بريدك والضغط على رابط التأكيد.';
+    } else if (msg.includes('rate limit')) {
+      msg = 'تم تجاوز الحد المسموح لإرسال رسائل البريد. انتظر ساعة أو استخدم بريدًا آخر.';
+    } else if (msg.includes('Invalid login credentials')) {
+      msg = 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
+    } else if (msg.includes('User already registered')) {
+      msg = 'هذا البريد مسجل بالفعل. جرب تسجيل الدخول.';
+    }
+
+    errorEl.textContent = msg;
     errorEl.style.display = 'block';
+  } finally {
     btnToLoad.innerHTML = originalText;
     btnToLoad.disabled = false;
   }
