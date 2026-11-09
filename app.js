@@ -5543,7 +5543,13 @@ async function uploadToCloud() {
       if (error) throw new Error('التقارير: ' + error.message);
       console.log('✅ تم رفع التقارير:', reportsToUpload.length);
     }
-
+    // 6. رفع الإعدادات (Settings)
+    const { error: settingsErr } = await supabaseClient.from('profiles').upsert({
+      id: user.id,
+      settings: data.settings
+    });
+    if (settingsErr) throw new Error('الإعدادات: ' + settingsErr.message);
+    console.log('✅ تم رفع الإعدادات');
     showNotify('✅ تمت المزامنة بنجاح!');
     console.log('🎉 المزامنة اكتملت بنجاح!');
 
@@ -5654,7 +5660,18 @@ async function downloadFromCloud() {
         savedAt: r.saved_at
       }));
     }
-
+    // 6. سحب الإعدادات (Settings)
+    const { data: profileData, error: profileErr } = await supabaseClient
+      .from('profiles')
+      .select('settings')
+      .eq('id', user.id)
+      .single();
+    
+    if (!profileErr && profileData && profileData.settings) {
+      // دمج الإعدادات السحابية مع الإعدادات المحلية الحالية
+      data.settings = Object.assign({}, data.settings, profileData.settings);
+      console.log('✅ تم سحب الإعدادات');
+    }
     await _doSave();
     renderHome(); renderGroupsList(); renderStudentsList(); renderCalendar();
     
