@@ -358,6 +358,15 @@
         </div>
 
         <div class="settings-sub-panel" data-settings-panel="data">
+                    <!-- زر المزامنة السحابية -->
+          <div style="margin-bottom:16px;padding:14px;background:var(--info-bg);border:1px dashed var(--accent-blue);border-radius:10px">
+            <div style="font-size:.82rem;color:var(--accent-blue);font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px">
+              <span data-icon="refresh" data-icon-size="14"></span>
+              المزامنة السحابية (Supabase)
+            </div>
+            <button class="btn btn-primary" onclick="uploadToCloud()" style="width:100%;padding:12px 20px"><span data-icon="upload" data-icon-size="14"></span> رفع البيانات الحالية للسحابة</button>
+            <button class="btn btn-secondary" onclick="downloadFromCloud()" style="width:100%;padding:12px 20px;margin-top:8px"><span data-icon="download" data-icon-size="14"></span> سحب البيانات من السحابة</button>
+          </div>
           <h3 class="settings-h"><span data-icon="star" data-icon-size="16"></span> مواقعك المفضلة</h3>
           <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 12px">تظهر داخل المتصفح المدمج — اضغط لفتحها.</p>
           <div id="settingsFavsGrid" class="settings-favs-grid"></div>
