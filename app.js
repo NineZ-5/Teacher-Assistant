@@ -14,7 +14,7 @@ window.addEventListener('error', function(e){
 // ═══════════════ SUPABASE INIT (SAFE) ═══════════════
 let supabaseClient = null;
 try {
-  const SUPABASE_URL = 'https://peydkdmxvsfocebypva.supabase.co';
+  const SUPABASE_URL = 'https://peydkdmxvsfyocebypva.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_O-KUuRYf4xVAhRT05CKn6Q_2GxPFcAr'; // ⚠️ ضع مفتاحك هنا
   
   if (window.supabase) {
