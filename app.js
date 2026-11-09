@@ -2942,6 +2942,13 @@ async function _doZipImport(zip, importedData, parsed, doMerge) {
 
     await saveDataAsync();
     addBackupLogEntry('import');
+    
+    // ═══ رفع البيانات للسحابة قبل التحديث ═══
+    if (currentUser) {
+      showNotify('⏳ جاري مزامنة النسخة المستعادة مع السحابة...');
+      await uploadToCloud();
+    }
+    
     showNotify('✅ تم الاستيراد بنجاح (' + restoredCount + ' مرفق)');
     setTimeout(function(){ location.reload(); }, 1500);
   } catch (e) {
@@ -2967,6 +2974,16 @@ async function _doJsonImport(importedData, doMerge) {
     await saveDataAsync();
     addBackupLogEntry('import');
     showNotify('✅ تم الاستيراد بنجاح');
+        await saveDataAsync();
+    addBackupLogEntry('import');
+    
+    // ═══ رفع البيانات للسحابة قبل التحديث ═══
+    if (currentUser) {
+      showNotify('⏳ جاري مزامنة النسخة المستعادة مع السحابة...');
+      await uploadToCloud();
+    }
+    
+    showNotify('✅ تم الاستيراد بنجاح (' + restoredCount + ' مرفق)');
     setTimeout(function(){ location.reload(); }, 1200);
   } catch (e) {
     console.error('JSON import failed:', e);
@@ -5548,6 +5565,13 @@ async function downloadFromCloud() {
   try {
     const { data: groupsData, error: groupsErr } = await supabaseClient.from('groups').select('*').eq('is_deleted', false);
     if (groupsErr) throw groupsErr;
+
+        // ═══ المزامنة الذكية: إذا كانت السحابة فارغة، ارفع البيانات المحلية ═══
+    if (!groupsData || groupsData.length === 0) {
+      console.log('السحابة فارغة، سيتم رفع البيانات المحلية تلقائياً...');
+      await uploadToCloud(); 
+      return true;
+    }
 
     const { data: studentsData, error: studentsErr } = await supabaseClient.from('students').select('*').eq('is_deleted', false);
     if (studentsErr) throw studentsErr;
