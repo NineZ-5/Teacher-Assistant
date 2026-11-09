@@ -5443,3 +5443,241 @@ async function checkSession() {
 window.addEventListener('load', function() {
   setTimeout(checkSession, 500); // تأخير بسيط لضمان تحميل Supabase
 });
+/* ═══════════════════════════════════════════════════════════
+   SUPABASE SYNC MODULE (UPLOAD / DOWNLOAD)
+   ═══════════════════════════════════════════════════════════ */
+
+let currentUser = null;
+
+async function getCurrentUser() {
+  if (!supabaseClient) return null;
+  const { data: { user } } = await supabaseClient.auth.getUser();
+  currentUser = user;
+  return user;
+}
+
+// دالة رفع البيانات المحلية إلى Supabase
+async function uploadToCloud() {
+  if (!supabaseClient) return showNotify('خطأ في الاتصال');
+  const user = await getCurrentUser();
+  if (!user) return showNotify('يجب تسجيل الدخول أولاً');
+
+  showNotify('⏳ جاري رفع البيانات للسحابة...');
+  
+  try {
+    // 1. رفع المجموعات
+    for (let g of data.groups) {
+      await supabaseClient.from('groups').upsert({
+        id: g.id,
+        user_id: user.id,
+        name: g.name,
+        teacher_name: g.teacherName || '',
+        timezone: g.timezone || '',
+        link: g.link || '',
+        location: g.location || '',
+        constants: g.constants || [],
+        schedule: g.schedule || [],
+        report_settings: g.reportSettings || {},
+        is_deleted: false
+      });
+    }
+
+    // 2. رفع الطلاب
+    for (let s of data.students) {
+      await supabaseClient.from('students').upsert({
+        id: s.id,
+        user_id: user.id,
+        group_id: s.groupId,
+        name: s.name,
+        phone: s.phone || '',
+        country: s.country || '',
+        timezone: s.timezone || '',
+        guardian_name: s.guardianName || '',
+        birth_date: s.birthDate || null,
+        current_level: s.currentLevel || '',
+        constants: s.constants || [],
+        static_texts: s.staticTexts || [],
+        notes: s.notes || '',
+        is_deleted: false
+      });
+    }
+
+    // 3. رفع الحصص
+    for (let sess of data.sessions) {
+      await supabaseClient.from('sessions').upsert({
+        id: sess.id,
+        user_id: user.id,
+        group_id: sess.groupId,
+        date: sess.date || null,
+        lesson_number: sess.lessonNumber || '',
+        duration: parseInt(sess.duration) || 0,
+        subject: sess.subject || '',
+        report: sess.report || '',
+        data: sess.data || {},
+        attachment_ids: sess.attachmentIds || [],
+        is_deleted: false
+      });
+    }
+
+    // 4. رفع المواعيد الاستثنائية
+    for (let a of data.appointments) {
+      await supabaseClient.from('appointments').upsert({
+        id: a.id,
+        user_id: user.id,
+        group_id: a.groupId,
+        date: a.date || null,
+        time: a.time || null,
+        rule_id: a.ruleId || null,
+        type: a.type,
+        is_deleted: false
+      });
+    }
+
+    // 5. رفع التقارير الشهرية
+    for (let r of data.monthlyReports) {
+      await supabaseClient.from('monthly_reports').upsert({
+        id: r.id,
+        user_id: user.id,
+        owner_type: r.ownerType,
+        owner_id: r.ownerId,
+        year: r.year,
+        month: r.month,
+        text: r.text || '',
+        is_deleted: false
+      });
+    }
+
+    showNotify('✅ تمت المزامنة بنجاح!');
+    console.log('Cloud sync successful!');
+  } catch (error) {
+    console.error('Sync error:', error);
+    showNotify('❌ فشل الرفع: ' + error.message);
+  }
+}
+
+// دالة سحب البيانات من Supabase إلى الجهاز المحلي
+async function downloadFromCloud() {
+  if (!supabaseClient) return false;
+  const user = await getCurrentUser();
+  if (!user) return false;
+
+  showNotify('⏳ جاري سحب البيانات من السحابة...');
+
+  try {
+    const { data: groupsData, error: groupsErr } = await supabaseClient.from('groups').select('*').eq('is_deleted', false);
+    if (groupsErr) throw groupsErr;
+
+    const { data: studentsData, error: studentsErr } = await supabaseClient.from('students').select('*').eq('is_deleted', false);
+    if (studentsErr) throw studentsErr;
+
+    const { data: sessionsData, error: sessionsErr } = await supabaseClient.from('sessions').select('*').eq('is_deleted', false);
+    if (sessionsErr) throw sessionsErr;
+
+    const { data: appointmentsData, error: apptErr } = await supabaseClient.from('appointments').select('*').eq('is_deleted', false);
+    if (apptErr) throw apptErr;
+
+    const { data: reportsData, error: reportsErr } = await supabaseClient.from('monthly_reports').select('*').eq('is_deleted', false);
+    if (reportsErr) throw reportsErr;
+
+    if (groupsData) {
+      data.groups = groupsData.map(g => ({
+        id: g.id,
+        name: g.name,
+        teacherName: g.teacher_name || '',
+        timezone: g.timezone || '',
+        link: g.link || '',
+        location: g.location || '',
+        constants: g.constants || [],
+        schedule: g.schedule || [],
+        reportSettings: g.report_settings || { customRowTypes: [], staticTexts: [] }
+      }));
+    }
+
+    if (studentsData) {
+      data.students = studentsData.map(s => ({
+        id: s.id,
+        groupId: s.group_id,
+        name: s.name,
+        phone: s.phone || '',
+        country: s.country || '',
+        timezone: s.timezone || '',
+        guardianName: s.guardian_name || '',
+        birthDate: s.birth_date || '',
+        currentLevel: s.current_level || '',
+        constants: s.constants || [],
+        staticTexts: s.static_texts || [],
+        notes: s.notes || ''
+      }));
+    }
+
+    if (sessionsData) {
+      data.sessions = sessionsData.map(s => ({
+        id: s.id,
+        groupId: s.group_id,
+        studentIds: [],
+        date: s.date || '',
+        lessonNumber: s.lesson_number || '',
+        duration: s.duration || 0,
+        subject: s.subject || 'quran',
+        report: s.report || '',
+        data: s.data || {},
+        attachmentIds: s.attachment_ids || [],
+        savedAt: s.saved_at
+      }));
+    }
+
+    if (appointmentsData) {
+      data.appointments = appointmentsData.map(a => ({
+        id: a.id,
+        groupId: a.group_id,
+        date: a.date || '',
+        time: a.time || '',
+        ruleId: a.rule_id || null,
+        type: a.type
+      }));
+    }
+
+    if (reportsData) {
+      data.monthlyReports = reportsData.map(r => ({
+        id: r.id,
+        ownerType: r.owner_type,
+        ownerId: r.owner_id,
+        year: r.year,
+        month: r.month,
+        text: r.text || '',
+        savedAt: r.saved_at
+      }));
+    }
+
+    await _doSave();
+    renderHome(); renderGroupsList(); renderStudentsList(); renderCalendar();
+    
+    showNotify('✅ تم سحب البيانات بنجاح!');
+    return true;
+
+  } catch (error) {
+    console.error('Download error:', error);
+    showNotify('❌ فشل سحب البيانات: ' + error.message);
+    return false;
+  }
+}
+
+// تحديث دالة التحقق من الجلسة لتشمل السحب
+async function checkSession() {
+  if (!supabaseClient) return;
+  try {
+    var { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) {
+      console.log('✅ Active session found');
+      await getCurrentUser();
+      document.getElementById('authOverlay').style.display = 'none';
+      // سحب البيانات تلقائياً عند بدء التشغيل
+      await downloadFromCloud();
+    } else {
+      showAuthOverlay();
+    }
+  } catch (e) {
+    console.error('Session check failed:', e);
+    showAuthOverlay();
+  }
+}
