@@ -71,6 +71,88 @@ function updateThemeSelector(){
     card.classList.toggle('active', card.dataset.theme === (data.settings.designTheme || 'teal'));
   });
 }
+/* ═══ Dark Mode Auto ═══ */
+function _timeToMin(hm){
+  if(!hm) return 0;
+  var p = String(hm).split(':').map(Number);
+  return (p[0]||0)*60 + (p[1]||0);
+}
+function isDayTime(){
+  var now = new Date();
+  var cm = now.getHours()*60 + now.getMinutes();
+  var ds = _timeToMin(data.settings.dayStart || '06:00');
+  var ns = _timeToMin(data.settings.nightStart || '19:00');
+  if(ds < ns) return cm >= ds && cm < ns;
+  return cm >= ds || cm < ns; /* فترة ليلية تعبر منتصف الليل */
+}
+function applyAutoTheme(){
+  if(data.settings.themeMode !== 'auto') return;
+  var target = isDayTime()
+    ? (data.settings.dayTheme || 'mint')
+    : (data.settings.nightTheme || 'teal');
+  if(data.settings.designTheme === target){
+    /* تحديث البطاقة النشطة إذا كانت الصفحة مفتوحة */
+    updateThemeSelector();
+    return;
+  }
+  data.settings.designTheme = target;
+  saveData();
+  applyDesignTheme(target);
+  updateThemeSelector();
+  /* حدّث حالة الأزرار في قسم المظهر إن كان مفتوحًا */
+  var modeSel = document.getElementById('themeModeSelect');
+  if (modeSel) modeSel.value = 'auto';
+}
+function saveThemeAutoSettings(){
+  var mode = (document.getElementById('themeModeSelect') || {}).value || 'manual';
+  var dayT = (document.getElementById('dayThemeSelect') || {}).value || 'mint';
+  var nightT = (document.getElementById('nightThemeSelect') || {}).value || 'teal';
+  var dS = (document.getElementById('dayStartInput') || {}).value || '06:00';
+  var nS = (document.getElementById('nightStartInput') || {}).value || '19:00';
+  data.settings.themeMode = mode;
+  data.settings.dayTheme = dayT;
+  data.settings.nightTheme = nightT;
+  data.settings.dayStart = dS;
+  data.settings.nightStart = nS;
+  saveData();
+  if(mode === 'auto') applyAutoTheme();
+  showNotify('✅ تم حفظ إعدادات الوضع');
+  renderThemeAutoUI();
+}
+function renderThemeAutoUI(){
+  var box = document.getElementById('themeAutoBox');
+  if(!box) return;
+  var m = data.settings.themeMode || 'manual';
+  box.innerHTML =
+    '<div class="form-field">'
+      + '<label>وضع التبديل</label>'
+      + '<select id="themeModeSelect" onchange="saveThemeAutoSettings()">'
+      +   '<option value="manual"' + (m==='manual'?' selected':'') + '>يدوي — أنا أختار الثيم</option>'
+      +   '<option value="auto"' + (m==='auto'?' selected':'') + '>تلقائي — فاتح نهارًا، داكن ليلًا</option>'
+      + '</select>'
+    + '</div>'
+    + '<div class="form-row-2">'
+      + '<div class="form-field"><label>ثيم النهار</label>'
+      +   '<select id="dayThemeSelect" onchange="saveThemeAutoSettings()">'
+      +   ['mint','ocean'].map(function(t){ return '<option value="'+t+'"'+(data.settings.dayTheme===t?' selected':'')+'>'+ (t==='mint'?'Mint Light':'Ocean Clean') +'</option>'; }).join('')
+      +   '</select></div>'
+      + '<div class="form-field"><label>ثيم الليل</label>'
+      +   '<select id="nightThemeSelect" onchange="saveThemeAutoSettings()">'
+      +   ['teal','indigo','ember'].map(function(t){ return '<option value="'+t+'"'+(data.settings.nightTheme===t?' selected':'')+'>'+ (t==='teal'?'Deep Teal':t==='indigo'?'Royal Indigo':'Warm Ember') +'</option>'; }).join('')
+      +   '</select></div>'
+    + '</div>'
+    + '<div class="form-row-2">'
+      + '<div class="form-field"><label>بداية النهار</label><input type="time" id="dayStartInput" value="' + escapeAttr(data.settings.dayStart||'06:00') + '" onchange="saveThemeAutoSettings()"></div>'
+      + '<div class="form-field"><label>بداية الليل</label><input type="time" id="nightStartInput" value="' + escapeAttr(data.settings.nightStart||'19:00') + '" onchange="saveThemeAutoSettings()"></div>'
+    + '</div>';
+}
+/* فحص كل دقيقة لتطبيق الثيم تلقائيًا */
+var _themeAutoTimer = null;
+function startThemeAutoTimer(){
+  if(_themeAutoTimer) clearInterval(_themeAutoTimer);
+  _themeAutoTimer = setInterval(applyAutoTheme, 60000);
+  applyAutoTheme();
+}
 
 /* ─── Audio context (lazy) ─── */
 function ensureAudioContext(){
@@ -560,7 +642,12 @@ function showNotify(msg){
   n.innerText = msg;
   n.style.display = 'block';
   clearTimeout(n._t);
-  n._t = setTimeout(function(){ n.style.display='none'; }, 2500);
+  void n.offsetWidth;
+  n.classList.add('show');
+  n._t = setTimeout(function(){
+    n.classList.remove('show');
+    setTimeout(function(){ n.style.display = 'none'; }, 250);
+  }, 2500);
 }
 
 /* ═══════════════ INDEXEDDB HELPERS ═══════════════ */
@@ -777,6 +864,11 @@ async function loadData(){
   if(!data.settings.notifRepeatInterval) data.settings.notifRepeatInterval = 30;
   if(!data.settings.notifVibratePattern) data.settings.notifVibratePattern = 'short';
   if(typeof data.settings.quietEnabled !== 'boolean') data.settings.quietEnabled = false;
+  if(!data.settings.themeMode) data.settings.themeMode = 'manual';
+  if(!data.settings.dayTheme) data.settings.dayTheme = 'mint';
+  if(!data.settings.nightTheme) data.settings.nightTheme = 'teal';
+  if(!data.settings.dayStart) data.settings.dayStart = '06:00';
+  if(!data.settings.nightStart) data.settings.nightStart = '19:00';
   if(!data.settings.quietFrom) data.settings.quietFrom = '23:00';
   if(!data.settings.quietTo) data.settings.quietTo = '07:00';
   if(!Array.isArray(data.settings.workLocations)) data.settings.workLocations = [];
@@ -1032,6 +1124,7 @@ function switchTab(name){
     document.getElementById('quietFrom').value = data.settings.quietFrom || '23:00';
     document.getElementById('quietTo').value = data.settings.quietTo || '07:00';
     updateThemeSelector();
+    renderThemeAutoUI();
     updateLastBackupInfo();
     renderBackupLog();
     renderWorkLocations();
@@ -1046,6 +1139,19 @@ function switchLibSub(sub){
   document.getElementById('lib-search-view').style.display = (sub === 'search') ? 'block' : 'none';
   if (sub === 'search') setTimeout(function(){ var inp = document.getElementById('searchInput'); if (inp) inp.focus(); }, 50);
 }
+function switchSettingsSub(sub){
+  document.querySelectorAll('.settings-sub-tab').forEach(function(b){
+    b.classList.toggle('active', b.dataset.settingsSub === sub);
+  });
+  document.querySelectorAll('.settings-sub-panel').forEach(function(p){
+    p.classList.toggle('active', p.dataset.settingsPanel === sub);
+  });
+  /* عند فتح "البيانات" حدّث معلومات التخزين */
+  if (sub === 'data' && typeof updateStorageInfo === 'function') {
+    setTimeout(updateStorageInfo, 100);
+  }
+}
+
 function switchLessonSub(sub){
   document.getElementById('subtab-btn-lesson').classList.toggle('active', sub === 'lesson');
   document.getElementById('subtab-btn-monthly').classList.toggle('active', sub === 'monthly');
@@ -1123,7 +1229,7 @@ function buildStudentCardHTML(i){
     + '<div class="student-header">'
     + '<div class="student-avatar">' + (i+1) + '</div>'
     + '<div class="student-info">'
-    + '<input type="text" class="student-name" placeholder="اسم الطالب" style="font-weight:700;font-size:.9rem;padding:4px 8px;background:transparent;border:none;border-bottom:1px solid var(--card-border);border-radius:0;width:100%;color:var(--text-primary)">'
+    + '<input type="text" class="student-name" placeholder="اسم الطالب">'
     + '</div>'
     + '<select class="attendance-select student-attendance" onchange="updateAbsenceClass(this.closest(\'.student-card\'))">'
     + '<option value="present">حاضر</option><option value="excused">بعذر</option><option value="absent">غائب</option>'
@@ -1546,7 +1652,27 @@ async function handleAttachmentUpload(event) {
   showNotify('✅ تمت إضافة المرفقات');
 }
 
-async function saveSession(){
+/* تغذية حفظ بصرية: زر → ✓ تم الحفظ (لثانيتين) */
+function showSaveSuccess(btn){
+  if (!btn || btn.dataset.saving) return;
+  btn.dataset.saving = '1';
+  var origHtml = btn.innerHTML;
+  var origBg = btn.style.background;
+  var origColor = btn.style.color;
+  btn.innerHTML = svgIcon('check', 16) + ' تم الحفظ';
+  btn.style.background = 'var(--accent-green)';
+  btn.style.color = '#fff';
+  btn.disabled = true;
+  setTimeout(function(){
+    btn.innerHTML = origHtml;
+    btn.style.background = origBg;
+    btn.style.color = origColor;
+    btn.disabled = false;
+    delete btn.dataset.saving;
+  }, 1800);
+}
+
+async function saveSession(btn){
   try {
     if (data.activeTimer) stopLessonTimer(true);
     var state = collectFormState();
@@ -1611,9 +1737,12 @@ async function saveSession(){
       data: state, report: report, savedAt: new Date().toISOString()
     });
 
-    await saveDataAsync();
-    _draftUnsaved = false;
-    showNotify('✅ تم حفظ الحصة');
+    var saved = await saveDataAsync();
+    if (saved) {
+      _draftUnsaved = false;
+      showNotify('✅ تم حفظ الحصة');
+      if (btn) showSaveSuccess(btn);
+    }
 
     if(document.getElementById('tab-home').classList.contains('active')) renderHome();
     updatePendingBadge();
@@ -2028,7 +2157,11 @@ function renderHome(){
   if (countEl) countEl.textContent = todayLessons.length + ' حصة';
   var todayHtml = '';
   if (!todayLessons.length) {
-    todayHtml = '<div class="home-empty">لا توجد حصص اليوم</div>';
+    todayHtml = '<div class="home-empty-elegant">'
+      + '<div class="he-icon">' + svgIcon('calendar', ICON_SIZES.xl) + '</div>'
+      + '<div class="he-title">لا توجد حصص اليوم</div>'
+      + '<div class="he-sub">يوم هادئ — فرصة للاستعداد</div>'
+      + '</div>';
   } else {
     var statusMeta = {
       upcoming: { label: 'قادمة', icon: 'clock', cls: 'status-upcoming' },
@@ -2067,37 +2200,42 @@ function renderHome(){
   var actEl = document.getElementById('homeActions');
   if (actEl) actEl.innerHTML = actionsHtml;
 
-  var upcomingHtml = ''; var upcomingCount = 0;
-  for (var d2 = 1; d2 <= 7; d2++) {
-    var ud = new Date(now); ud.setDate(ud.getDate() + d2); ud.setHours(0,0,0,0);
-    var uOcs = getOccurrencesForDate(ud);
-    if (uOcs.length) {
-      var dateDisplay = ud.getDate() + '/' + (ud.getMonth()+1);
-      upcomingHtml += '<div class="home-upcoming-day"><div class="home-upcoming-date">' + svgIcon('calendar-days', ICON_SIZES.sm) + ' ' + DAY_NAMES[ud.getDay()] + ' — ' + dateDisplay + '</div>';
-      uOcs.forEach(function(o){
-        upcomingHtml += '<div class="home-upcoming-item" onclick="showOccurrenceDetails(\'' + o.dateISO + '\',\'' + o.groupId + '\',\'' + o.time + '\')"><span class="time">' + svgIcon('clock', ICON_SIZES.xs) + ' ' + escapeHtml(o.time) + '</span><span>' + escapeHtml(o.groupName) + '</span></div>';
-      });
-      upcomingHtml += '</div>';
-      upcomingCount++;
-    }
-  }
-  if (!upcomingCount) upcomingHtml = '<div class="home-empty">لا توجد حصص قادمة في الأسبوع القادم</div>';
-  var upEl = document.getElementById('homeUpcoming');
-  if (upEl) upEl.innerHTML = upcomingHtml;
+  /* ═══ حصص الغد ═══ */
+  var tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0,0,0,0);
+  var tomorrowOccs = getOccurrencesForDate(tomorrow);
 
-  var recentSessions = data.sessions.slice().sort(function(a,b){ return (b.savedAt||'').localeCompare(a.savedAt||''); }).slice(0, 5);
-  var recentHtml = '';
-  if (!recentSessions.length) {
-    recentHtml = '<div class="home-empty">لم تسجل أي حصة بعد</div>';
+  var tomTitleEl = document.getElementById('homeTomorrowTitle');
+  if (tomTitleEl) {
+    tomTitleEl.textContent = 'حصص الغد — ' + DAY_NAMES[tomorrow.getDay()] + ' ' + tomorrow.getDate() + '/' + (tomorrow.getMonth()+1);
+  }
+  var tomCountEl = document.getElementById('homeTomorrowCount');
+  if (tomCountEl) {
+    tomCountEl.textContent = tomorrowOccs.length + ' حصة';
+  }
+
+  var tomorrowHtml = '';
+  if (!tomorrowOccs.length) {
+    tomorrowHtml = '<div class="home-empty-elegant">'
+      + '<div class="he-icon">' + svgIcon('calendar', ICON_SIZES.xl) + '</div>'
+      + '<div class="he-title">لا توجد حصص غدًا</div>'
+      + '<div class="he-sub">يوم هادئ — فرصة للاستعداد</div>'
+      + '</div>';
   } else {
-    recentSessions.forEach(function(s){
-      var g = data.groups.find(function(x){ return x.id === s.groupId; });
-      var dateDisplay = s.date ? s.date.split('-').reverse().join('/') : '—';
-      recentHtml += '<div class="home-recent-item" onclick="viewSession(\'' + s.id + '\')"><div><div class="home-recent-name">' + escapeHtml(g ? g.name : '—') + '</div><div class="home-recent-date">' + svgIcon('calendar', ICON_SIZES.xs) + ' ' + dateDisplay + (s.lessonNumber ? ' — ' + escapeHtml(s.lessonNumber) : '') + '</div></div><div class="home-recent-arrow">' + svgIcon('chevron-left', ICON_SIZES.md) + '</div></div>';
+    tomorrowOccs.forEach(function(occ){
+      var g = data.groups.find(function(x){ return x.id === occ.groupId; });
+      var subjLabel = (g && g.subject) ? g.subject : 'القرآن';
+      var meta = statusMeta[occ.status] || statusMeta.upcoming;
+      tomorrowHtml += '<div class="lesson-item" onclick="showOccurrenceDetails(\'' + occ.dateISO + '\',\'' + occ.groupId + '\',\'' + occ.time + '\')">'
+        + '<div class="lesson-time">' + escapeHtml(occ.time) + '</div>'
+        + '<div class="lesson-body"><div class="lesson-name">' + escapeHtml(occ.groupName) + '</div><div class="lesson-meta">' + escapeHtml(subjLabel) + '</div></div>'
+        + '<span class="lesson-status ' + meta.cls + '">' + svgIcon(meta.icon, ICON_SIZES.xs) + ' ' + meta.label + '</span>'
+        + '</div>';
     });
   }
-  var recEl = document.getElementById('homeRecent');
-  if (recEl) recEl.innerHTML = recentHtml;
+  var tomEl = document.getElementById('homeTomorrowLessons');
+  if (tomEl) tomEl.innerHTML = tomorrowHtml;
   updatePendingBadge();
   hydrateIcons(document.getElementById('tab-home'));
 }
@@ -2112,7 +2250,11 @@ function renderGroupsList(){
   var searchEl = document.getElementById('groupSearch');
   var q = searchEl ? normalize(searchEl.value) : '';
   list.innerHTML = '';
-  if(!data.groups.length){ list.innerHTML = '<div class="cfg-empty">لا توجد مجموعات بعد.</div>'; return; }
+  if(!data.groups.length){ list.innerHTML = '<div class="home-empty-elegant">'
+  + '<div class="he-icon">' + svgIcon('folder-open', ICON_SIZES.xl) + '</div>'
+  + '<div class="he-title">لا توجد مجموعات بعد</div>'
+  + '<div class="he-sub">اضغط "＋ مجموعة" لإنشاء أول مجموعة</div>'
+  + '</div>'; return; }
   var filtered = data.groups.filter(function(g){ return !q || normalize(g.name).indexOf(q) !== -1; });
   if(!filtered.length){ list.innerHTML = '<div class="cfg-empty">لا نتائج مطابقة</div>'; return; }
   filtered.forEach(function(g){
@@ -2245,7 +2387,14 @@ function renderStudentsList(){
   var q = (document.getElementById('studentSearch').value || '').trim();
   list.innerHTML = '';
   var filtered = data.students.filter(function(s){ return !q || normalize(s.name).indexOf(normalize(q)) !== -1; });
-  if(!filtered.length){ list.innerHTML = '<div class="cfg-empty">لا يوجد طلاب بعد.</div>'; return; }
+  if(!filtered.length){
+  var isSearch = q && q.trim();
+  list.innerHTML = '<div class="home-empty-elegant">'
+    + '<div class="he-icon">' + svgIcon('user', ICON_SIZES.xl) + '</div>'
+    + '<div class="he-title">' + (isSearch ? 'لا نتائج مطابقة' : 'لا يوجد طلاب بعد') + '</div>'
+    + '<div class="he-sub">' + (isSearch ? 'جرّب كلمة بحث أخرى' : 'أضف طالبًا من صفحة المجموعة') + '</div>'
+    + '</div>'; return;
+}
   filtered.forEach(function(s){
     var g = data.groups.find(function(x){ return x.id === s.groupId; });
     var sc = data.sessions.filter(function(x){ return (x.studentIds||[]).indexOf(s.id) !== -1; }).sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
@@ -2465,12 +2614,371 @@ function clearForm(){
   showNotify('نموذج جديد');
 }
 
-/* ═══════════════ BACKUP / IMPORT / MERGE ═══════════════ */
+/* ═══════════════ BACKUP — NEW ARCHITECTURE ═══════════════ */
+
+/* حفظ Blob باستخدام File System Access API (إن وُجد) أو fallback */
+async function _saveBlobWithPicker(blob, suggestedName, acceptTypes) {
+  /* المحاولة الأولى: File System Access API — نافذة نظام حقيقية */
+  if (window.showSaveFilePicker) {
+    try {
+      var handle = await window.showSaveFilePicker({
+        suggestedName: suggestedName,
+        types: acceptTypes
+      });
+      if (!handle) return { saved: false, cancelled: true };
+      var writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return { saved: true, method: 'fs' };
+    } catch (e) {
+      if (e.name === 'AbortError') return { saved: false, cancelled: true };
+      console.warn('showSaveFilePicker failed, falling back:', e);
+    }
+  }
+
+  /* Fallback: تنزيل تقليدي (لا نعرف إن أُكمل) */
+  try {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = suggestedName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+    return { saved: true, method: 'download' };
+  } catch (e) {
+    return { saved: false, error: e };
+  }
+}
+
+/* حساب أحجام النسخ الاحتياطية (ZIP + JSON) */
+async function _getBackupSizes() {
+  var jsonStr = JSON.stringify(data);
+  var jsonSize = 0;
+  try { jsonSize = new Blob([jsonStr]).size; } catch (e) { jsonSize = jsonStr.length; }
+
+  var attachmentsCount = 0;
+  var attachmentsSize = 0;
+
+  for (var i = 0; i < data.sessions.length; i++) {
+    var s = data.sessions[i];
+    if (!s.attachmentIds || !s.attachmentIds.length) continue;
+    for (var j = 0; j < s.attachmentIds.length; j++) {
+      try {
+        var file = await idbAttachmentGet(s.attachmentIds[j]);
+        if (file) {
+          attachmentsCount++;
+          attachmentsSize += (file.size || 0);
+        }
+      } catch (e) { /* تجاهل */ }
+    }
+  }
+
+  return {
+    jsonSize: jsonSize,
+    attachmentsCount: attachmentsCount,
+    attachmentsSize: attachmentsSize,
+    totalSize: jsonSize + attachmentsSize
+  };
+}
+
+/* نافذة اختيار نوع التصدير */
+function showBackupExportModal() {
+  openGenericModal(
+    svgIcon('upload', ICON_SIZES.lg) + ' إنشاء نسخة احتياطية',
+    '<div id="backupExportBody" style="text-align:center;padding:30px">'
+      + '<div style="display:inline-block;width:36px;height:36px;border:3px solid var(--card-border);border-top-color:var(--accent-green);border-radius:50%;animation:spin 1s linear infinite"></div>'
+      + '<div style="margin-top:14px;color:var(--text-muted);font-size:.85rem">جاري حساب الأحجام...</div>'
+    + '</div>',
+    '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button>'
+  );
+  _renderBackupExportOptions();
+}
+
+async function _renderBackupExportOptions() {
+  var sizes;
+  try { sizes = await _getBackupSizes(); }
+  catch (e) { sizes = { jsonSize: 0, attachmentsCount: 0, totalSize: 0 }; }
+
+  var body = document.getElementById('backupExportBody');
+  if (!body) return;
+
+  var html = '<div style="display:flex;flex-direction:column;gap:12px">';
+
+  /* الخيار الأول: كل البيانات */
+  html += '<button class="backup-option recommended" onclick="closeGenericModal();exportFullBackup()">'
+    + '<div class="backup-option-badge">⭐ موصى به</div>'
+    + '<div class="backup-option-icon">' + svgIcon('package', ICON_SIZES.xl) + '</div>'
+    + '<div class="backup-option-title">كل البيانات</div>'
+    + '<div class="backup-option-size">~' + formatBytes(sizes.totalSize) + ' • ' + sizes.attachmentsCount + ' مرفقًا</div>'
+    + '<div class="backup-option-desc">ملف ZIP يشمل التقارير والصور وملفات PDF — الحجم تقديري (قد يكون أصغر بعد الضغط)</div>'
+    + '</button>';
+
+  /* الخيار الثاني: البيانات فقط */
+  html += '<button class="backup-option" onclick="closeGenericModal();exportBackup()">'
+    + '<div class="backup-option-icon">' + svgIcon('file-text', ICON_SIZES.xl) + '</div>'
+    + '<div class="backup-option-title">البيانات فقط</div>'
+    + '<div class="backup-option-size">' + formatBytes(sizes.jsonSize) + '</div>'
+    + '<div class="backup-option-desc">ملف JSON — كل التقارير والبيانات بدون مرفقات (أسرع وأصغر حجمًا)</div>'
+    + '</button>';
+
+  html += '</div>';
+  body.innerHTML = html;
+  hydrateIcons(body);
+}
+
+/* زر الاستعادة — يفتح مدير ملفات ذكي */
+function showBackupImportModal() {
+  document.getElementById('backupSmartFile').click();
+}
+
+/* استقبال الملف — كشف النوع تلقائيًا */
+async function _handleBackupFileInput(event) {
+  var file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+
+  var ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (ext === 'zip') {
+    await _prepareZipImport(file);
+  } else if (ext === 'json') {
+    await _prepareJsonImport(file);
+  } else {
+    showNotify('⚠️ صيغة غير مدعومة — استخدم ZIP أو JSON');
+  }
+}
+
+/* تجهيز استيراد ZIP */
+async function _prepareZipImport(file) {
+  if (typeof JSZip === 'undefined') {
+    showNotify('⚠️ مكتبة ZIP غير محمّلة');
+    return;
+  }
+  showNotify('⏳ قراءة الملف...');
+  try {
+    var zip = await JSZip.loadAsync(file);
+    var dataFile = zip.file('data.json');
+    if (!dataFile) {
+      showNotify('⚠️ الملف لا يحتوي على data.json');
+      return;
+    }
+    var parsed = JSON.parse(await dataFile.async('text'));
+    if (!parsed.data) {
+      showNotify('⚠️ data.json غير صالح');
+      return;
+    }
+    var importedData = parsed.data;
+    var counts = {
+      groups: (importedData.groups || []).length,
+      students: (importedData.students || []).length,
+      sessions: (importedData.sessions || []).length,
+      reports: (importedData.monthlyReports || []).length
+    };
+    var attCount = 0;
+    var attFolder = zip.folder('attachments');
+    if (attFolder) {
+      attCount = Object.keys(attFolder.files).filter(function(p){ return !attFolder.files[p].dir; }).length;
+    }
+    _pendingRestore = {
+      type: 'zip',
+      fileName: file.name,
+      fileSize: file.size,
+      counts: counts,
+      attachmentsCount: attCount,
+      onMerge: function(){ _doZipImport(zip, importedData, parsed, true); },
+      onReplace: function(){ _doZipImport(zip, importedData, parsed, false); }
+    };
+    _showRestoreChoiceModal(_pendingRestore);
+  } catch (e) {
+    console.error('ZIP read failed:', e);
+    showNotify('⚠️ فشل قراءة الملف: ' + (e.message || ''));
+  }
+}
+
+/* تجهيز استيراد JSON */
+async function _prepareJsonImport(file) {
+  showNotify('⏳ قراءة الملف...');
+  try {
+    var text = await file.text();
+    var d = JSON.parse(text);
+    if (!d.data) {
+      showNotify('⚠️ الملف لا يحتوي على بيانات صالحة');
+      return;
+    }
+    var importedData = d.data;
+    var counts = {
+      groups: (importedData.groups || []).length,
+      students: (importedData.students || []).length,
+      sessions: (importedData.sessions || []).length,
+      reports: (importedData.monthlyReports || []).length
+    };
+    _pendingRestore = {
+      type: 'json',
+      fileName: file.name,
+      fileSize: file.size,
+      counts: counts,
+      attachmentsCount: 0,
+      onMerge: function(){ _doJsonImport(importedData, true); },
+      onReplace: function(){ _doJsonImport(importedData, false); }
+    };
+    _showRestoreChoiceModal(_pendingRestore);
+  } catch (e) {
+    console.error('JSON read failed:', e);
+    showNotify('⚠️ فشل قراءة الملف: ' + (e.message || ''));
+  }
+}
+
+/* حالة مؤقتة للاستيراد */
+var _pendingRestore = null;
+
+/* عرض نافذة اختيار دمج/استبدال */
+function _showRestoreChoiceModal(opts) {
+  var counts = opts.counts || {};
+  var infoLine = (counts.groups || 0) + ' مجموعة • ' + (counts.students || 0) + ' طالب • ' + (counts.sessions || 0) + ' حصة';
+  if (opts.attachmentsCount > 0) infoLine += ' • ' + opts.attachmentsCount + ' مرفق';
+
+  var body = '<div class="restore-file-info">'
+    + '<div class="restore-file-icon">' + svgIcon(opts.type === 'zip' ? 'package' : 'file-text', ICON_SIZES.xl) + '</div>'
+    + '<div>'
+    +   '<div class="restore-file-name">' + escapeHtml(opts.fileName) + '</div>'
+    +   '<div class="restore-file-meta">' + formatBytes(opts.fileSize) + ' • ' + escapeHtml(infoLine) + '</div>'
+    + '</div>'
+    + '</div>'
+    + '<div class="restore-choice">'
+    +   '<button class="restore-choice-btn merge" onclick="_executeRestore(\'merge\')">'
+    +     '<span class="restore-choice-icon">' + svgIcon('check-circle', ICON_SIZES.lg) + '</span>'
+    +     '<div>'
+    +       '<div class="restore-choice-title">دمج ذكي (موصى به)</div>'
+    +       '<div class="restore-choice-desc">يحتفظ ببياناتك الحالية، يضيف الجديد، ويُحدّث ما هو أقدم</div>'
+    +     '</div>'
+    +   '</button>'
+    +   '<button class="restore-choice-btn replace" onclick="_executeRestore(\'replace\')">'
+    +     '<span class="restore-choice-icon">' + svgIcon('alert-triangle', ICON_SIZES.lg) + '</span>'
+    +     '<div>'
+    +       '<div class="restore-choice-title">استبدال كامل</div>'
+    +       '<div class="restore-choice-desc">يحذف كل البيانات الحالية ثم يستورد — لا يمكن التراجع</div>'
+    +     '</div>'
+    +   '</button>'
+    + '</div>';
+
+  openGenericModal(
+    svgIcon('download', ICON_SIZES.lg) + ' استعادة نسخة احتياطية',
+    body,
+    '<button class="btn btn-secondary" onclick="_pendingRestore=null;closeGenericModal()">إلغاء</button>'
+  );
+}
+
+function _executeRestore(mode) {
+  if (!_pendingRestore) return;
+  var ctx = _pendingRestore;
+  _pendingRestore = null;
+  closeGenericModal();
+  if (mode === 'merge') ctx.onMerge();
+  else ctx.onReplace();
+}
+
+/* تنفيذ استيراد ZIP */
+async function _doZipImport(zip, importedData, parsed, doMerge) {
+  showNotify('⏳ جاري الاستيراد...');
+  try {
+    var manifest = {};
+    var manifestFile = zip.file('attachments.json');
+    if (manifestFile) {
+      try { manifest = JSON.parse(await manifestFile.async('text')); } catch (e) {}
+    }
+
+    if (doMerge) {
+      mergeBackupData(importedData);
+    } else {
+      data = importedData;
+      ['groups','students','sessions','monthlyReports','appointments','workSessions'].forEach(function(k){ if (!data[k]) data[k] = []; });
+      if (!data.settings) data.settings = { theme:'dark', teacherName:'', teacherTimezone:'', designTheme:'teal' };
+      if (!data.settings.designTheme) data.settings.designTheme = 'teal';
+      data.groups.forEach(function(g){ if (!g.constants) g.constants = []; if (!g.schedule) g.schedule = []; if (!g.timezone) g.timezone = ''; if (typeof g.link === 'undefined') g.link = ''; if (typeof g.location === 'undefined') g.location = ''; });
+      data.students.forEach(function(s){ if (!s.constants) s.constants = []; });
+    }
+
+    /* استعادة المرفقات */
+    var attachmentsFolder = zip.folder('attachments');
+    var restoredCount = 0;
+    if (attachmentsFolder) {
+      var paths = Object.keys(attachmentsFolder.files);
+      for (var k = 0; k < paths.length; k++) {
+        var path = paths[k];
+        if (attachmentsFolder.files[path].dir) continue;
+        var filename = path.substring(path.lastIndexOf('/') + 1);
+        var attId = filename.substring(0, filename.lastIndexOf('.'));
+        try {
+          var blob = await attachmentsFolder.files[path].async('blob');
+          var meta = manifest[attId] || {};
+          var ext = filename.split('.').pop().toLowerCase();
+          var mimeMap = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', webp:'image/webp', pdf:'application/pdf' };
+          var type = meta.type || mimeMap[ext] || 'application/octet-stream';
+          var name = meta.name || filename;
+          var f = new File([blob], name, { type: type });
+          await idbAttachmentSet(attId, f);
+          restoredCount++;
+        } catch (e) { console.error('restore failed', path, e); }
+      }
+    }
+
+    await saveDataAsync();
+    addBackupLogEntry('import');
+    showNotify('✅ تم الاستيراد بنجاح (' + restoredCount + ' مرفق)');
+    setTimeout(function(){ location.reload(); }, 1500);
+  } catch (e) {
+    console.error('ZIP import failed:', e);
+    showNotify('⚠️ فشل: ' + e.message);
+  }
+}
+
+/* تنفيذ استيراد JSON */
+async function _doJsonImport(importedData, doMerge) {
+  showNotify('⏳ جاري الاستيراد...');
+  try {
+    if (doMerge) {
+      mergeBackupData(importedData);
+    } else {
+      data = importedData;
+      ['groups','students','sessions','monthlyReports','appointments','workSessions'].forEach(function(k){ if (!data[k]) data[k] = []; });
+      if (!data.settings) data.settings = { theme:'dark', teacherName:'', teacherTimezone:'', designTheme:'teal' };
+      if (!data.settings.designTheme) data.settings.designTheme = 'teal';
+      data.groups.forEach(function(g){ if (!g.constants) g.constants = []; if (!g.schedule) g.schedule = []; if (!g.timezone) g.timezone = ''; if (typeof g.link === 'undefined') g.link = ''; if (typeof g.location === 'undefined') g.location = ''; });
+      data.students.forEach(function(s){ if (!s.constants) s.constants = []; });
+    }
+    await saveDataAsync();
+    addBackupLogEntry('import');
+    showNotify('✅ تم الاستيراد بنجاح');
+    setTimeout(function(){ location.reload(); }, 1200);
+  } catch (e) {
+    console.error('JSON import failed:', e);
+    showNotify('⚠️ فشل: ' + e.message);
+  }
+}
+
 async function exportFullBackup() {
   if (typeof JSZip === 'undefined') {
     showNotify('⚠️ مكتبة ZIP غير محمّلة — تحقق من اتصالك بالإنترنت');
     return;
   }
+
+  /* ١) اطلب مكان الحفظ أولًا (قبل العمل الثقيل — ضمن User Gesture) */
+  var filename = 'teacher-assistant-full-backup-' + new Date().toISOString().slice(0,10) + '.zip';
+  var fileHandle = null;
+  if (window.showSaveFilePicker) {
+    try {
+      fileHandle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'ZIP Archive', accept: { 'application/zip': ['.zip'] } }]
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') return; /* المستخدم ألغى — لا رسالة */
+      console.warn('save picker failed:', e);
+      fileHandle = null;
+    }
+  }
+
   showNotify('⏳ جارٍ جمع البيانات...');
   var zip = new JSZip();
   var dataBackup = { __exported_at: new Date().toISOString(), __version: 'v5', data: data };
@@ -2499,108 +3007,64 @@ async function exportFullBackup() {
   showNotify('⏳ إنشاء ZIP... (' + totalFiles + ' مرفق، ' + formatBytes(totalBytes) + ')');
   try {
     var blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = 'quran-full-backup-' + new Date().toISOString().slice(0,10) + '.zip';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+
+    if (fileHandle) {
+      /* حفظ حقيقي عبر File System Access API */
+      var writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      showNotify('✅ تم حفظ النسخة بنجاح (' + formatBytes(blob.size) + ')');
+    } else {
+      /* Fallback — رسالة صادقة (لا نعرف إن أُكمل التنزيل) */
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+      showNotify('✅ بدأ التنزيل — تحقق من مجلد التنزيلات (' + formatBytes(blob.size) + ')');
+    }
+
     localStorage.setItem(LAST_BACKUP_KEY, new Date().toISOString());
     updateLastBackupInfo();
     addBackupLogEntry('export');
-    showNotify('✅ تم تصدير ' + formatBytes(blob.size) + ' (' + totalFiles + ' مرفق)');
   } catch(e) {
     console.error('ZIP export failed:', e);
     showNotify('⚠️ فشل: ' + e.message);
   }
 }
 
-async function importFullBackup(event) {
-  if (typeof JSZip === 'undefined') {
-    showNotify('⚠️ مكتبة ZIP غير محمّلة');
-    event.target.value = '';
-    return;
-  }
-  var file = event.target.files[0];
-  if (!file) return;
-  showNotify('⏳ قراءة ZIP...');
-  try {
-    var zip = await JSZip.loadAsync(file);
-    var dataFile = zip.file('data.json');
-    if (!dataFile) {
-      showNotify('⚠️ الملف لا يحتوي على data.json');
-      event.target.value = '';
-      return;
-    }
-    var parsed = JSON.parse(await dataFile.async('text'));
-    if (!parsed.data) {
-      showNotify('⚠️ data.json غير صالح');
-      event.target.value = '';
-      return;
-    }
-    var importedData = parsed.data;
-    var manifest = {};
-    var manifestFile = zip.file('attachments.json');
-    if (manifestFile) { try { manifest = JSON.parse(await manifestFile.async('text')); } catch(e) {} }
-    var doMerge = confirm('كيف تريد الاستيراد؟\n\nموافق = دمج (يحتفظ بالحالي)\nإلغاء = استبدال كامل');
-    if (doMerge) { mergeBackupData(importedData); }
-    else {
-      if (!confirm('سيتم استبدال جميع البيانات والمرفقات. متابعة؟')) { event.target.value = ''; return; }
-      data = importedData;
-      ['groups','students','sessions','monthlyReports','appointments','workSessions'].forEach(function(k){ if (!data[k]) data[k] = []; });
-      if (!data.settings) data.settings = {theme:'dark', teacherName:'', teacherTimezone:'', designTheme:'teal'};
-      if (!data.settings.designTheme) data.settings.designTheme = 'teal';
-      data.groups.forEach(function(g){ if (!g.constants) g.constants = []; if (!g.schedule) g.schedule = []; if (!g.timezone) g.timezone = ''; if (typeof g.link === 'undefined') g.link = ''; if (typeof g.location === 'undefined') g.location = ''; });
-      data.students.forEach(function(s){ if (!s.constants) s.constants = []; });
-    }
-    var attachmentsFolder = zip.folder('attachments');
-    var count = 0;
-    if (attachmentsFolder) {
-      var paths = Object.keys(attachmentsFolder.files);
-      for (var k = 0; k < paths.length; k++) {
-        var path = paths[k];
-        if (attachmentsFolder.files[path].dir) continue;
-        var filename = path.substring(path.lastIndexOf('/') + 1);
-        var attId = filename.substring(0, filename.lastIndexOf('.'));
-        try {
-          var blob = await attachmentsFolder.files[path].async('blob');
-          var meta = manifest[attId] || {};
-          var ext = filename.split('.').pop().toLowerCase();
-          var mimeMap = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', webp:'image/webp', pdf:'application/pdf' };
-          var type = meta.type || mimeMap[ext] || 'application/octet-stream';
-          var name = meta.name || filename;
-          var f = new File([blob], name, { type: type });
-          await idbAttachmentSet(attId, f);
-          count++;
-        } catch(e) { console.error('restore failed', path, e); }
-      }
-    }
-    await saveDataAsync();
-    addBackupLogEntry('import');
-    showNotify('✅ تم الاستيراد (' + count + ' مرفق)');
-    setTimeout(function(){ location.reload(); }, 1500);
-  } catch(e) {
-    console.error('ZIP import failed:', e);
-    showNotify('⚠️ فشل: ' + e.message);
-  }
-  event.target.value = '';
-}
-
-function exportBackup(){
+async function exportBackup() {
   try {
     var backup = { __exported_at: new Date().toISOString(), __version: 'v4', data: data };
-    var blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = 'quran-backup-' + new Date().toISOString().slice(0,10) + '.json';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
-    localStorage.setItem(LAST_BACKUP_KEY, new Date().toISOString());
-    updateLastBackupInfo();
-    addBackupLogEntry('export');
-    showNotify('تم التصدير');
-  } catch(e){ showNotify('فشل التصدير'); }
+    var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    var filename = 'teacher-assistant-backup-' + new Date().toISOString().slice(0,10) + '.json';
+
+    var result = await _saveBlobWithPicker(blob, filename, [{
+      description: 'JSON Backup',
+      accept: { 'application/json': ['.json'] }
+    }]);
+
+    if (result.cancelled) return; /* المستخدم ألغى — لا رسالة */
+
+    if (result.saved) {
+      localStorage.setItem(LAST_BACKUP_KEY, new Date().toISOString());
+      updateLastBackupInfo();
+      addBackupLogEntry('export');
+      if (result.method === 'fs') {
+        showNotify('✅ تم حفظ النسخة بنجاح');
+      } else {
+        showNotify('✅ بدأ التنزيل — تحقق من مجلد التنزيلات');
+      }
+    } else {
+      showNotify('⚠️ تعذّر الحفظ');
+    }
+  } catch (e) {
+    console.error('exportBackup failed:', e);
+    showNotify('فشل التصدير');
+  }
 }
 function mergeBackupData(importedData){
   var stats = { groupsAdded: 0, studentsAdded: 0, sessionsAdded: 0, sessionsUpdated: 0, reportsAdded: 0, appointmentsAdded: 0, workSessionsAdded: 0 };
@@ -2651,35 +3115,7 @@ function mergeBackupData(importedData){
   });
   return stats;
 }
-async function importBackup(e){
-  var file = e.target.files[0]; if(!file) return;
-  var reader = new FileReader();
-  reader.onload = async function(ev){
-    try {
-      var d = JSON.parse(ev.target.result);
-      if(!d.data){ showNotify('ملف غير صالح'); return; }
-      var doMerge = confirm('كيف تريد الاستيراد؟\n\nموافق = دمج (يحتفظ ببياناتك الحالية)\nإلغاء = استبدال كامل');
-      if(doMerge){
-        var stats = mergeBackupData(d.data);
-        await saveDataAsync(); addBackupLogEntry('import');
-        showNotify('تم الدمج: ' + stats.groupsAdded + ' مجموعة، ' + stats.studentsAdded + ' طالب، ' + stats.sessionsAdded + ' حصة');
-        setTimeout(function(){ location.reload(); }, 1500);
-      } else {
-        if(!confirm('سيتم استبدال جميع البيانات. متابعة؟')) return;
-        data = d.data;
-        ['groups','students','sessions','monthlyReports','appointments','workSessions'].forEach(function(k){ if(!data[k]) data[k] = []; });
-        if(!data.settings) data.settings = {theme:'dark', teacherName:'', teacherTimezone:'', designTheme:'teal'};
-        if(!data.settings.designTheme) data.settings.designTheme = 'teal';
-        data.groups.forEach(function(g){ if(!g.constants) g.constants = []; if(!g.schedule) g.schedule = []; if(!g.timezone) g.timezone = ''; if(typeof g.link === 'undefined') g.link = ''; if(typeof g.location === 'undefined') g.location = ''; });
-        data.students.forEach(function(s){ if(!s.constants) s.constants = []; });
-        await saveDataAsync(); addBackupLogEntry('import');
-        showNotify('تم الاستيراد');
-        setTimeout(function(){ location.reload(); }, 800);
-      }
-    } catch(err){ showNotify('ملف غير صالح'); }
-  };
-  reader.readAsText(file); e.target.value = '';
-}
+
 function updateLastBackupInfo(){
   var el = document.getElementById('lastBackupInfo'); if(!el) return;
   var raw = localStorage.getItem(LAST_BACKUP_KEY);
@@ -2689,12 +3125,55 @@ function updateLastBackupInfo(){
     el.innerHTML = svgIcon('clock', ICON_SIZES.xs) + ' آخر نسخة: ' + d.toLocaleDateString('ar') + ' - ' + d.toLocaleTimeString('ar',{hour:'2-digit',minute:'2-digit'});
   } catch(e){}
 }
-function resetAllData(){
+async function resetAllData(){
   if(!confirm('حذف كل البيانات نهائيًا؟')) return;
   if(!confirm('تأكيد أخير: هل أخذت نسخة احتياطية؟')) return;
-  localStorage.removeItem(DATA_KEY);
-  localStorage.removeItem(DRAFT_KEY);
-  location.reload();
+
+  showNotify('⏳ جارٍ المسح...');
+
+  try {
+    /* ١) امسح IndexedDB — كل الـ stores */
+    if (_idb) {
+      var stores = [IDB_STORE, IDB_META_STORE, IDB_ATTACHMENTS_STORE];
+      for (var i = 0; i < stores.length; i++) {
+        try {
+          await new Promise(function(resolve, reject){
+            var tx = _idb.transaction(stores[i], 'readwrite');
+            var req = tx.objectStore(stores[i]).clear();
+            req.onsuccess = function(){ resolve(); };
+            req.onerror = function(){ reject(req.error); };
+          });
+        } catch(e){ console.error('clear store ' + stores[i] + ':', e); }
+      }
+    }
+
+    /* ٢) امسح localStorage — كل مفاتيح التطبيق */
+    var keysToRemove = [
+      DATA_KEY, DRAFT_KEY, LAST_BACKUP_KEY, BACKUP_LOG_KEY,
+      BROWSER_FAVS_KEY, BROWSER_TABS_KEY,
+      MIGRATED_AT_KEY, MIGRATED_BACKUP_KEY
+    ];
+    keysToRemove.forEach(function(k){
+      try { localStorage.removeItem(k); } catch(e){}
+    });
+
+    /* ٣) امسح Cache Storage (Service Worker cache) */
+    if ('caches' in window) {
+      try {
+        var cacheNames = await caches.keys();
+        for (var ci = 0; ci < cacheNames.length; ci++) {
+          await caches.delete(cacheNames[ci]);
+        }
+      } catch(e){ console.error('clear caches:', e); }
+    }
+
+    showNotify('✅ تم مسح كل البيانات — إعادة التحميل...');
+    setTimeout(function(){ location.reload(); }, 800);
+
+  } catch(e){
+    console.error('resetAllData:', e);
+    showNotify('⚠️ فشل المسح — جرّب إعادة تحميل الصفحة');
+  }
 }
 function addBackupLogEntry(type){
   try {
@@ -3197,7 +3676,11 @@ function renderCalendarListView(body){
     });
     html += '</div>';
   }
-  if(!has) html += '<div class="cal-list-empty">لا توجد حصص في هذه الفترة.</div>';
+  if(!has) html += '<div class="home-empty-elegant" style="margin-top:12px">'
+  + '<div class="he-icon">' + svgIcon('calendar', ICON_SIZES.xl) + '</div>'
+  + '<div class="he-title">لا توجد حصص في هذه الفترة</div>'
+  + '<div class="he-sub">جرّب السابق أو التالي للتنقل</div>'
+  + '</div>';
   html += '</div>'; body.innerHTML = html;
 }
 function calendarNavigate(dir){
@@ -4716,13 +5199,48 @@ async function updateStorageInfo(){
   }
   el.innerHTML = lines.join('<br>');
 }
-
+function showKeyboardShortcuts(){
+  var isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  var mod = isMac ? '⌘' : 'Ctrl';
+  var rows = [
+    [mod + ' + 1', 'الرئيسية'],
+    [mod + ' + 2', 'الحصة'],
+    [mod + ' + 3', 'التقويم'],
+    [mod + ' + 4', 'المكتبة'],
+    [mod + ' + 5', 'الإعدادات'],
+    [mod + ' + N', 'حصة جديدة'],
+    [mod + ' + B', 'المتصفح'],
+    [mod + ' + K', 'البحث في التقارير'],
+    [mod + ' + ,', 'الإعدادات'],
+    ['Esc', 'إغلاق النافذة المفتوحة'],
+    ['?', 'هذه القائمة']
+  ];
+  var body = '<div style="display:flex;flex-direction:column;gap:6px">';
+  rows.forEach(function(r){
+    body += '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--card-secondary-bg);border:1px solid var(--card-border);border-radius:8px;gap:12px">'
+      + '<span style="font-size:.86rem;color:var(--text-primary)">' + escapeHtml(r[1]) + '</span>'
+      + '<kbd style="font-family:monospace;font-size:.78rem;font-weight:700;padding:4px 10px;background:var(--card-bg);border:1px solid var(--card-border-strong);border-radius:6px;color:var(--accent-green);white-space:nowrap;box-shadow:0 1px 0 var(--card-border-strong)">' + escapeHtml(r[0]) + '</kbd>'
+      + '</div>';
+  });
+  body += '</div>';
+  openGenericModal(
+    svgIcon('zap', ICON_SIZES.lg) + ' اختصارات لوحة المفاتيح',
+    body,
+    '<button class="btn btn-secondary" onclick="closeGenericModal()">إغلاق</button>'
+  );
+}
 window.addEventListener('load', async function(){
   try {
     migrateOldData();
     await initDataLayer();
     await loadData();
     loadFavorites();
+    /* تطبيق الوضع التلقائي أولًا إذا مُفعّل */
+    if(data.settings.themeMode === 'auto'){
+      data.settings.designTheme = isDayTime()
+        ? (data.settings.dayTheme || 'mint')
+        : (data.settings.nightTheme || 'teal');
+    }
     applyDesignTheme(data.settings.designTheme || 'teal');
     hydrateIcons();
     setupIconObserver();
@@ -4750,6 +5268,7 @@ window.addEventListener('load', async function(){
     renderWorkLocations();
     startReminderInterval();
     updateThemeSelector();
+    startThemeAutoTimer();
     var out = document.getElementById('output');
     var so = document.getElementById('sheetOutput');
     if(out && so){
@@ -4757,8 +5276,8 @@ window.addEventListener('load', async function(){
       so.addEventListener('input', function(){ out.value = so.value; });
     }
     document.addEventListener('keydown', function(e){
+      /* ESC — إغلاق الطبقة العليا */
       if(e.key === 'Escape'){
-        // Close browser first if open
         if (document.getElementById('browserOverlay').style.display === 'flex'){
           closeBrowser();
           return;
@@ -4766,12 +5285,29 @@ window.addEventListener('load', async function(){
         closeReportSheet();
         closeGenericModal();
       }
-      if(e.ctrlKey && !e.shiftKey && !e.altKey){
+
+      /* تجاهل الاختصارات داخل حقول الإدخال (إلا Ctrl/Cmd) */
+      var tag = (e.target && e.target.tagName) || '';
+      var inField = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable));
+      var modKey = e.ctrlKey || e.metaKey;
+
+      /* Ctrl/Cmd + رقم → تنقل بين التبويبات */
+      if(modKey && !e.shiftKey && !e.altKey){
         if(e.key === '1'){ e.preventDefault(); switchTab('home'); }
         else if(e.key === '2'){ e.preventDefault(); switchTab('lesson'); }
         else if(e.key === '3'){ e.preventDefault(); switchTab('calendar'); }
         else if(e.key === '4'){ e.preventDefault(); switchTab('library'); }
         else if(e.key === '5'){ e.preventDefault(); switchTab('settings'); }
+        else if(e.key === 'n' || e.key === 'N'){ e.preventDefault(); switchTab('lesson'); }
+        else if(e.key === 'b' || e.key === 'B'){ e.preventDefault(); openInAppBrowser(); }
+        else if(e.key === 'k' || e.key === 'K'){ e.preventDefault(); switchTab('library'); switchLibSub('search'); setTimeout(function(){ var el = document.getElementById('searchInput'); if(el){ el.focus(); el.select(); } }, 100); }
+        else if(e.key === ',' || e.key === '،'){ e.preventDefault(); switchTab('settings'); }
+      }
+
+      /* Shift + ? → قائمة الاختصارات */
+      if(e.key === '?' && !inField){
+        e.preventDefault();
+        showKeyboardShortcuts();
       }
     });
     setTimeout(hydrateIcons, 200);

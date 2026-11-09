@@ -1,7 +1,7 @@
 {
-  "name": "مساعد تقارير القرآن Pro",
-  "short_name": "تقارير القرآن",
-  "description": "تقارير احترافية للحصص القرآنية — يعمل offline",
+  "name": "Teacher Assistant",
+  "short_name": "Teacher Assistant",
+  "description": "Teacher Assistant — تقارير احترافية للحصص، يعمل offline",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
