@@ -5456,102 +5456,84 @@ async function getCurrentUser() {
   return user;
 }
 
-// دالة رفع البيانات المحلية إلى Supabase
+// دالة رفع البيانات المحلية إلى Supabase (نسخة محسنة وسريعة)
 async function uploadToCloud() {
   if (!supabaseClient) return showNotify('خطأ في الاتصال');
   const user = await getCurrentUser();
   if (!user) return showNotify('يجب تسجيل الدخول أولاً');
 
   showNotify('⏳ جاري رفع البيانات للسحابة...');
-  
+  console.log('🚀 بدء المزامنة...');
+
   try {
-    // 1. رفع المجموعات
-    for (let g of data.groups) {
-      await supabaseClient.from('groups').upsert({
-        id: g.id,
-        user_id: user.id,
-        name: g.name,
-        teacher_name: g.teacherName || '',
-        timezone: g.timezone || '',
-        link: g.link || '',
-        location: g.location || '',
-        constants: g.constants || [],
-        schedule: g.schedule || [],
-        report_settings: g.reportSettings || {},
-        is_deleted: false
-      });
+    // 1. رفع المجموعات (دفعة واحدة)
+    if (data.groups.length > 0) {
+      const groupsToUpload = data.groups.map(g => ({
+        id: g.id, user_id: user.id, name: g.name, teacher_name: g.teacherName || '',
+        timezone: g.timezone || '', link: g.link || '', location: g.location || '',
+        constants: g.constants || [], schedule: g.schedule || [],
+        report_settings: g.reportSettings || {}, is_deleted: false
+      }));
+      const { error } = await supabaseClient.from('groups').upsert(groupsToUpload);
+      if (error) throw new Error('المجموعات: ' + error.message);
+      console.log('✅ تم رفع المجموعات:', groupsToUpload.length);
     }
 
-    // 2. رفع الطلاب
-    for (let s of data.students) {
-      await supabaseClient.from('students').upsert({
-        id: s.id,
-        user_id: user.id,
-        group_id: s.groupId,
-        name: s.name,
-        phone: s.phone || '',
-        country: s.country || '',
-        timezone: s.timezone || '',
-        guardian_name: s.guardianName || '',
-        birth_date: s.birthDate || null,
-        current_level: s.currentLevel || '',
-        constants: s.constants || [],
-        static_texts: s.staticTexts || [],
-        notes: s.notes || '',
-        is_deleted: false
-      });
+    // 2. رفع الطلاب (دفعة واحدة)
+    if (data.students.length > 0) {
+      const studentsToUpload = data.students.map(s => ({
+        id: s.id, user_id: user.id, group_id: s.groupId, name: s.name, phone: s.phone || '',
+        country: s.country || '', timezone: s.timezone || '', guardian_name: s.guardianName || '',
+        birth_date: s.birthDate || null, current_level: s.currentLevel || '',
+        constants: s.constants || [], static_texts: s.staticTexts || [], notes: s.notes || '', is_deleted: false
+      }));
+      const { error } = await supabaseClient.from('students').upsert(studentsToUpload);
+      if (error) throw new Error('الطلاب: ' + error.message);
+      console.log('✅ تم رفع الطلاب:', studentsToUpload.length);
     }
 
-    // 3. رفع الحصص
-    for (let sess of data.sessions) {
-      await supabaseClient.from('sessions').upsert({
-        id: sess.id,
-        user_id: user.id,
-        group_id: sess.groupId,
-        date: sess.date || null,
-        lesson_number: sess.lessonNumber || '',
-        duration: parseInt(sess.duration) || 0,
-        subject: sess.subject || '',
-        report: sess.report || '',
-        data: sess.data || {},
-        attachment_ids: sess.attachmentIds || [],
-        is_deleted: false
-      });
+    // 3. رفع الحصص (دفعة واحدة)
+    if (data.sessions.length > 0) {
+      const sessionsToUpload = data.sessions.map(sess => ({
+        id: sess.id, user_id: user.id, group_id: sess.groupId, date: sess.date || null,
+        lesson_number: sess.lessonNumber || '', duration: parseInt(sess.duration) || 0,
+        subject: sess.subject || '', report: sess.report || '', data: sess.data || {},
+        attachment_ids: sess.attachmentIds || [], is_deleted: false
+      }));
+      const { error } = await supabaseClient.from('sessions').upsert(sessionsToUpload);
+      if (error) throw new Error('الحصص: ' + error.message);
+      console.log('✅ تم رفع الحصص:', sessionsToUpload.length);
     }
 
-    // 4. رفع المواعيد الاستثنائية
-    for (let a of data.appointments) {
-      await supabaseClient.from('appointments').upsert({
-        id: a.id,
-        user_id: user.id,
-        group_id: a.groupId,
-        date: a.date || null,
-        time: a.time || null,
-        rule_id: a.ruleId || null,
-        type: a.type,
-        is_deleted: false
-      });
+    // 4. رفع المواعيد (دفعة واحدة)
+    if (data.appointments.length > 0) {
+      const apptsToUpload = data.appointments.map(a => ({
+        id: a.id, user_id: user.id, group_id: a.groupId, date: a.date || null,
+        time: a.time || null, rule_id: a.ruleId || null, type: a.type, is_deleted: false
+      }));
+      const { error } = await supabaseClient.from('appointments').upsert(apptsToUpload);
+      if (error) throw new Error('المواعيد: ' + error.message);
+      console.log('✅ تم رفع المواعيد:', apptsToUpload.length);
     }
 
-    // 5. رفع التقارير الشهرية
-    for (let r of data.monthlyReports) {
-      await supabaseClient.from('monthly_reports').upsert({
-        id: r.id,
-        user_id: user.id,
-        owner_type: r.ownerType,
-        owner_id: r.ownerId,
-        year: r.year,
-        month: r.month,
-        text: r.text || '',
-        is_deleted: false
-      });
+    // 5. رفع التقارير الشهرية (دفعة واحدة)
+    if (data.monthlyReports.length > 0) {
+      const reportsToUpload = data.monthlyReports.map(r => ({
+        id: r.id, user_id: user.id, owner_type: r.ownerType, owner_id: r.ownerId,
+        year: r.year, month: r.month, text: r.text || '', is_deleted: false
+      }));
+      const { error } = await supabaseClient.from('monthly_reports').upsert(reportsToUpload);
+      if (error) throw new Error('التقارير: ' + error.message);
+      console.log('✅ تم رفع التقارير:', reportsToUpload.length);
     }
 
     showNotify('✅ تمت المزامنة بنجاح!');
-    console.log('Cloud sync successful!');
+    console.log('🎉 المزامنة اكتملت بنجاح!');
+
   } catch (error) {
-    console.error('Sync error:', error);
-    showNotify('❌ فشل الرفع: ' + error.message);
+    console.error('❌ خطأ في المزامنة:', error);
+    // استخدام alert ليظهر للمستخدم ولا يختفي بسرعة
+    alert('فشل الرفع: ' + error.message);
   }
 }
 
