@@ -129,3 +129,14 @@ const IDB_META_STORE = 'meta';
 const IDB_ATTACHMENTS_STORE = 'attachments';
 const MIGRATED_AT_KEY = 'quran_migrated_to_idb_at';
 const MIGRATED_BACKUP_KEY = 'quran_data_v4_migrated_backup';
+
+if (typeof window !== 'undefined') {
+  Object.assign(window, {
+    DATA_KEY, DRAFT_KEY, LAST_BACKUP_KEY, BACKUP_LOG_KEY, BROWSER_FAVS_KEY,
+    MONTH_NAMES, DAY_NAMES, ICON_SIZES, FAV_COLORS, ATT_LABELS,
+    ALL_ROW_TYPES, SECTION_LABELS, FORM_LABELS, MODE_LABELS, COUNTRY_TZ,
+    SVG_ICONS, DESIGN_THEMES, IDB_NAME, IDB_VERSION, IDB_STORE,
+    IDB_META_STORE, IDB_ATTACHMENTS_STORE, MIGRATED_AT_KEY, MIGRATED_BACKUP_KEY,
+    quranData, surahNames
+  });
+}

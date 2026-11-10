@@ -1,4 +1,4 @@
-const CACHE_NAME = 'quran-reports-v2';
+const CACHE_NAME = 'quran-reports-v3'; // ترقية الإصدار لإجبار الهواتف على مسح الكاش القديم
 const ASSETS = [
   './',
   './index.html',
