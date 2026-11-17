@@ -67,12 +67,67 @@ export function isDSTActive(tz){
   } catch(e){ return false; }
 }
 
+export function formatTimeDisplay(timeHM, compact){
+  if (!timeHM) return '';
+  var str = String(timeHM).trim();
+  var parts = str.split(':');
+  if (parts.length < 2) return str;
+  var h = parseInt(parts[0], 10);
+  var m = String(parseInt(parts[1], 10)).padStart(2, '0');
+  if (isNaN(h)) return str;
+
+  var fmt = (typeof window !== 'undefined' && window.data && window.data.settings && window.data.settings.timeFormat) || '12h';
+  if (fmt === '24h') {
+    if (compact) return (m === '00') ? String(h) : (String(h) + ':' + m);
+    return String(h).padStart(2, '0') + ':' + m;
+  }
+
+  var period = (h >= 12) ? 'م' : 'ص';
+  var h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  if (compact) {
+    return (m === '00') ? (h12 + period) : (h12 + ':' + m + period);
+  }
+  return h12 + ':' + m + ' ' + period;
+}
+
+export function getCurrentClockText(){
+  var tz = getTeacherTimezone();
+  var now = new Date();
+  var hh, mm;
+  try {
+    if (tz) {
+      var dtf = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+      var parts = dtf.formatToParts(now);
+      var map = {};
+      parts.forEach(function(p){ map[p.type] = p.value; });
+      hh = parseInt(map.hour, 10);
+      if (hh === 24) hh = 0;
+      mm = map.minute;
+    } else {
+      hh = now.getHours();
+      mm = String(now.getMinutes()).padStart(2, '0');
+    }
+  } catch(e) {
+    hh = now.getHours();
+    mm = String(now.getMinutes()).padStart(2, '0');
+  }
+  return formatTimeDisplay(String(hh).padStart(2, '0') + ':' + mm, false);
+}
+
 if (typeof window !== 'undefined') {
   Object.assign(window, {
     getTeacherTimezone,
     getTimezoneOffsetMinutes,
     convertTimeBetweenTimezones,
     formatUtcOffset,
-    isDSTActive
+    isDSTActive,
+    formatTimeDisplay,
+    getCurrentClockText
   });
 }

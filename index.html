@@ -21,6 +21,19 @@
 <div id="errorBar"></div>
 
 <div class="container">
+  <div id="appClockBar" class="app-clock-bar" style="display:none">
+    <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1">
+      <div class="app-clock-pill" id="appLiveClock" title="الوقت الحالي">
+        <span data-icon="clock" data-icon-size="14"></span>
+        <span id="appClockTime">--:--</span>
+      </div>
+      <span id="appClockTz" class="app-clock-tz"></span>
+    </div>
+    <button type="button" class="notif-bell-btn" onclick="openNotificationsModal()" title="التنبيهات" aria-label="التنبيهات">
+      <span data-icon="bell" data-icon-size="18"></span>
+      <span class="notif-bell-badge" id="appBellBadge" style="display:none">0</span>
+    </button>
+  </div>
   <header>
     <h1>Teacher Assistant</h1>
     <p class="subtitle">تقارير احترافية • Offline • مجموعات وطلاب</p>
@@ -34,23 +47,24 @@
     <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')"><span data-icon="settings" data-icon-size="18"></span><span>الإعدادات</span></button>
   </nav>
 
-  <div id="lessonReminderBar" class="lesson-reminder-bar">
-    <span class="reminder-icon" data-icon="bell" data-icon-size="20"></span>
-    <div class="reminder-text" id="reminderText">—</div>
-    <div class="reminder-actions">
-      <button onclick="startFromReminder()" id="reminderOpenBtn"><span data-icon="edit-3" data-icon-size="14"></span> فتح</button>
-      <button onclick="dismissReminder()"><span data-icon="bell-off" data-icon-size="14"></span> إخفاء</button>
-    </div>
-  </div>
-
   <main>
     <section id="tab-home" class="tab-panel active">
       <div class="top-bar">
         <div class="top-bar-left">
           <div class="greeting" id="homeGreeting"></div>
-          <div class="date-line" id="homeSubtitle"></div>
+          <div class="date-line-wrap">
+            <span class="date-line" id="homeSubtitle"></span>
+            <span class="home-clock-badge" id="homeClockBadge" title="الوقت الحالي">
+              <span data-icon="clock" data-icon-size="12"></span>
+              <span id="homeClockTime">--:--</span>
+            </span>
+          </div>
         </div>
         <div class="top-bar-actions">
+          <button type="button" class="avatar-btn notif-bell-home-btn" onclick="openNotificationsModal()" title="التنبيهات" aria-label="التنبيهات">
+            <span data-icon="bell" data-icon-size="20"></span>
+            <span class="notif-bell-badge" id="homeBellBadge" style="display:none">0</span>
+          </button>
           <button class="avatar-btn" onclick="openInAppBrowser()" title="المتصفح">
             <span data-icon="globe" data-icon-size="20"></span>
           </button>
@@ -173,10 +187,11 @@
             <label>مدة الحصة (بالدقائق)</label>
             <input type="number" id="duration" placeholder="مدة الحصة (بالدقائق)">
           </div>
-          <div class="action-buttons">
-            <button class="btn-lg primary" onclick="generateReport()"><span data-icon="file-text" data-icon-size="16"></span> إنشاء التقرير</button>
-            <button class="btn-lg secondary" onclick="saveSession(this)"><span data-icon="save" data-icon-size="16"></span> حفظ</button>
+          <div class="action-buttons" style="grid-template-columns:1fr 1fr;margin-bottom:10px">
+            <button type="button" class="btn-lg primary" onclick="generateReport('ar')"><span data-icon="file-text" data-icon-size="16"></span> تقرير عربي</button>
+            <button type="button" class="btn-lg secondary" id="btnGenReportEn" onclick="generateReport('en')"><span data-icon="globe" data-icon-size="16"></span> تقرير إنجليزي</button>
           </div>
+          <button type="button" class="btn-lg secondary" onclick="saveSession(this)" style="width:100%;margin-bottom:14px;border:1px solid var(--card-border)"><span data-icon="save" data-icon-size="16"></span> حفظ</button>
           <button class="btn btn-secondary mobile-only" onclick="openReportSheet()" style="width:100%;margin-bottom:10px"><span data-icon="file-text" data-icon-size="14"></span> عرض التقرير</button>
           <button class="btn btn-secondary" onclick="clearForm()" style="width:100%;margin-bottom:10px"><span data-icon="refresh" data-icon-size="14"></span> بدء حصة جديدة</button>
         </div>
@@ -187,7 +202,8 @@
           <p style="font-size:.72rem;color:var(--text-muted);margin:-4px 0 10px">يمكنك التعديل قبل النسخ أو الحفظ</p>
           <button class="btn btn-copy" onclick="copyReport()" style="width:100%;height:44px;margin-bottom:10px"><span data-icon="copy" data-icon-size="14"></span> نسخ النص</button>
           <button class="btn btn-primary" onclick="shareReportWhatsApp()" style="width:100%;height:44px;margin:0 0 10px"><span data-icon="smartphone" data-icon-size="14"></span> إرسال واتساب</button>
-          <button class="btn btn-word" onclick="exportToWord()" style="width:100%;height:44px"><span data-icon="file-word" data-icon-size="14"></span> تحميل Word</button>
+          <button class="btn btn-secondary" onclick="shareReportTelegram()" style="width:100%;height:44px;margin:0 0 10px"><span data-icon="send" data-icon-size="14"></span> إرسال تيليجرام</button>
+          <button class="btn btn-word" onclick="exportToWord()" style="width:100%;height:44px;display:none"><span data-icon="file-word" data-icon-size="14"></span> تحميل Word</button>
         </div>
       </div>
 
@@ -201,7 +217,10 @@
               <div class="form-field"><label>السنة</label><input type="number" id="monthlyYearInput"></div>
             </div>
           </div>
-          <button class="btn btn-primary" onclick="generateMonthlyDraftFromTab()"><span data-icon="refresh" data-icon-size="14"></span> توليد المسودة من الحصص</button>
+          <div class="btn-row">
+            <button type="button" class="btn btn-primary" style="flex:1;margin:0" onclick="generateMonthlyDraftFromTab('ar')"><span data-icon="refresh" data-icon-size="14"></span> توليد بالعربية</button>
+            <button type="button" class="btn btn-secondary" id="btnGenMonthlyEn" style="flex:1;margin:0" onclick="generateMonthlyDraftFromTab('en')"><span data-icon="globe" data-icon-size="14"></span> توليد بالإنجليزية</button>
+          </div>
           <div id="monthlyTabDraftContainer" style="display:none;margin-top:20px">
             <span class="section-title">مسودة التقرير (يمكنك التعديل عليها)</span>
             <textarea id="monthlyTabDraft" style="min-height:350px;height:45vh;resize:vertical;font-family:'IBM Plex Sans Arabic',monospace;line-height:1.7;font-size:.86rem"></textarea>
@@ -213,10 +232,16 @@
 
     <section id="tab-calendar" class="tab-panel">
       <div class="card">
-        <div class="cal-view-switcher">
-          <button type="button" class="cal-view-btn active" data-view="monthly" onclick="switchCalendarView('monthly')"><span data-icon="calendar" data-icon-size="14"></span> شهري</button>
-          <button type="button" class="cal-view-btn" data-view="weekly" onclick="switchCalendarView('weekly')"><span data-icon="calendar-days" data-icon-size="14"></span> أسبوعي</button>
-          <button type="button" class="cal-view-btn" data-view="list" onclick="switchCalendarView('list')"><span data-icon="list" data-icon-size="14"></span> قائمة</button>
+        <div class="cal-top-toolbar">
+          <div class="cal-view-switcher" style="margin-bottom:0;width:100%">
+            <button type="button" class="cal-view-btn active" data-view="monthly" onclick="switchCalendarView('monthly')"><span data-icon="calendar" data-icon-size="14"></span> شهري</button>
+            <button type="button" class="cal-view-btn" data-view="weekly" onclick="switchCalendarView('weekly')"><span data-icon="calendar-days" data-icon-size="14"></span> أسبوعي</button>
+            <button type="button" class="cal-view-btn" data-view="list" onclick="switchCalendarView('list')"><span data-icon="list" data-icon-size="14"></span> قائمة</button>
+          </div>
+          <div class="cal-top-actions">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="calendarGoToday()" title="العودة لليوم"><span data-icon="calendar" data-icon-size="14"></span> اليوم</button>
+            <button type="button" class="btn btn-primary btn-sm" style="margin:0;width:auto" onclick="openQuickScheduleModal(null)"><span data-icon="plus" data-icon-size="14"></span> موعد</button>
+          </div>
         </div>
         <div class="cal-nav">
           <button class="btn btn-secondary btn-sm" onclick="calendarNavigate(-1)"><span data-icon="chevron-right" data-icon-size="12"></span> السابق</button>
@@ -268,22 +293,56 @@
 
     <section id="tab-settings" class="tab-panel">
       <div class="card">
-        <div class="settings-sub-tabs">
-          <button class="settings-sub-tab active" data-settings-sub="account" onclick="switchSettingsSub('account')">
-            <span data-icon="user" data-icon-size="14"></span> <span>الحساب</span>
-          </button>
-          <button class="settings-sub-tab" data-settings-sub="appearance" onclick="switchSettingsSub('appearance')">
-            <span data-icon="palette" data-icon-size="14"></span> <span>المظهر</span>
-          </button>
-          <button class="settings-sub-tab" data-settings-sub="notifications" onclick="switchSettingsSub('notifications')">
-            <span data-icon="bell" data-icon-size="14"></span> <span>التنبيهات</span>
-          </button>
-          <button class="settings-sub-tab" data-settings-sub="data" onclick="switchSettingsSub('data')">
-            <span data-icon="archive" data-icon-size="14"></span> <span>البيانات</span>
-          </button>
+        <div id="settingsMenuPage" class="page-slide-in">
+          <div class="settings-account-mini" id="settingsAccountMini">
+            <span data-icon="user" data-icon-size="16" style="color:var(--accent-green)"></span>
+            <span id="settingsAccountMiniText" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">جاري التحقق...</span>
+          </div>
+          <div class="nav-menu-list">
+            <button type="button" class="nav-menu-item" onclick="switchSettingsSub('account')">
+              <span class="nav-menu-icon"><span data-icon="user" data-icon-size="18"></span></span>
+              <div class="nav-menu-body">
+                <div class="nav-menu-title">الحساب والملف الشخصي</div>
+                <div class="nav-menu-sub">تسجيل الدخول، اسم المعلم، التوقيت، نظام الوقت، ساعات الحصص</div>
+              </div>
+              <span class="nav-menu-arrow" data-icon="chevron-left" data-icon-size="16"></span>
+            </button>
+            <button type="button" class="nav-menu-item" onclick="switchSettingsSub('appearance')">
+              <span class="nav-menu-icon info"><span data-icon="palette" data-icon-size="18"></span></span>
+              <div class="nav-menu-body">
+                <div class="nav-menu-title">المظهر والتصميم</div>
+                <div class="nav-menu-sub">الوضع التلقائي نهار/ليل، الثيمات الخمسة</div>
+              </div>
+              <span class="nav-menu-arrow" data-icon="chevron-left" data-icon-size="16"></span>
+            </button>
+            <button type="button" class="nav-menu-item" onclick="switchSettingsSub('notifications')">
+              <span class="nav-menu-icon amber"><span data-icon="bell" data-icon-size="18"></span></span>
+              <div class="nav-menu-body">
+                <div class="nav-menu-title">التنبيهات</div>
+                <div class="nav-menu-sub">التذكير قبل الحصة، الصوت، الاهتزاز، ساعات الصمت</div>
+              </div>
+              <span class="nav-menu-arrow" data-icon="chevron-left" data-icon-size="16"></span>
+            </button>
+            <button type="button" class="nav-menu-item" onclick="switchSettingsSub('data')">
+              <span class="nav-menu-icon green"><span data-icon="archive" data-icon-size="18"></span></span>
+              <div class="nav-menu-body">
+                <div class="nav-menu-title">البيانات والمزامنة</div>
+                <div class="nav-menu-sub">المزامنة السحابية، النسخ الاحتياطي، سلة المهملات، التقويم</div>
+              </div>
+              <span class="nav-menu-arrow" data-icon="chevron-left" data-icon-size="16"></span>
+            </button>
+          </div>
         </div>
 
-        <div class="settings-sub-panel active" data-settings-panel="account">
+        <div id="settingsSubPageWrapper" class="page-slide-in" style="display:none">
+          <div class="subpage-header">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="backToSettingsMenu()">
+              <span data-icon="arrow-right" data-icon-size="14"></span> رجوع للإعدادات
+            </button>
+            <h2 id="settingsSubPageTitle">—</h2>
+          </div>
+
+        <div class="settings-sub-panel" data-settings-panel="account">
           <div style="margin-bottom:20px;padding:14px;background:var(--card-secondary-bg);border:1px solid var(--card-border);border-radius:10px">
             <div style="font-size:.85rem;color:var(--text-muted);margin-bottom:8px">حالة الحساب:</div>
             <div id="accountStatusEmail" style="font-weight:700;margin-bottom:12px;word-break:break-all">جاري التحقق...</div>
@@ -297,6 +356,13 @@
               <button class="btn btn-secondary" onclick="saveTeacherDefault()" style="padding:10px 20px">حفظ</button>
             </div>
           </div>
+          <div class="form-field">
+            <label>الصفة (جنس المعلم)</label>
+            <select id="settingsTeacherGender" onchange="saveTeacherGender()">
+              <option value="male">معلم (ذكر)</option>
+              <option value="female">معلمة (أنثى)</option>
+            </select>
+          </div>
           <div class="form-field" style="margin-top:14px">
             <label>توقيتك المحلي (لحساب توقيت الحصص)</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -305,6 +371,22 @@
               <button class="btn btn-secondary" onclick="openTimezonePicker(function(tz){document.getElementById('settingsTimezone').value=tz;})" style="padding:10px 14px" title="اختيار"><span data-icon="globe" data-icon-size="14"></span></button>
               <button class="btn btn-secondary" onclick="saveTeacherTimezone()" style="padding:10px 20px">حفظ</button>
             </div>
+          </div>
+          <div class="form-field" style="margin-top:14px">
+            <label>نظام عرض الوقت</label>
+            <select id="settingsTimeFormat" onchange="saveTimeFormat()">
+              <option value="12h">نظام 12 ساعة (ص / م)</option>
+              <option value="24h">نظام 24 ساعة (18:00)</option>
+            </select>
+          </div>
+          <div class="form-field" style="margin-top:14px">
+            <label>مفتاح Gemini API للترجمة الأونلاين (اختياري للنصوص الحرة والأسماء)</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <input type="password" id="settingsGeminiKey" placeholder="AIza..." dir="ltr" style="flex:1;min-width:180px;text-align:left">
+              <button type="button" class="btn btn-secondary" onclick="saveGeminiApiKey()" style="padding:10px 16px">حفظ</button>
+              <button type="button" class="btn btn-secondary" id="btnTestGeminiKey" onclick="testGeminiKeyFromSettings()" style="padding:10px 14px">اختبار</button>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="clearTransCacheFromSettings()" style="margin-top:8px;width:auto">مسح ذاكرة الترجمة المحفوظة</button>
           </div>
 
           <h3 class="settings-h"><span data-icon="building-2" data-icon-size="16"></span> أماكن العمل</h3>
@@ -344,22 +426,56 @@
         </div>
 
         <div class="settings-sub-panel" data-settings-panel="notifications">
-          <h3 class="settings-h"><span data-icon="bell" data-icon-size="16"></span> التنبيهات</h3>
-          <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifEnabled" onchange="saveNotificationSettings()"><span>تفعيل شريط التنبيه</span></label></div>
-          <div class="form-field"><label>التنبيه قبل الحصة بـ</label><select id="notifMinutes" onchange="saveNotificationSettings()"><option value="5">٥ دقائق</option><option value="10">١٠ دقائق</option><option value="15">١٥ دقيقة</option><option value="30">٣٠ دقيقة</option><option value="60">ساعة</option><option value="120">ساعتان</option></select></div>
+          <h3 class="settings-h"><span data-icon="clock" data-icon-size="16"></span> بطاقة «الآن» في الرئيسية</h3>
+          <p style="font-size:.78rem;color:var(--text-muted);margin:0 0 10px">تحديد متى تظهر بطاقة الحصة الحالية في الصفحة الرئيسية (منفصل عن التنبيهات).</p>
+          <div class="form-row-2">
+            <div class="form-field"><label>تظهر قبل الحصة بـ (دقيقة)</label><input type="number" id="nowCardBeforeMin" min="0" max="240" value="30" onchange="saveNotificationSettings()"></div>
+            <div class="form-field"><label>تبقى بعد بدايتها بـ (دقيقة)</label><input type="number" id="nowCardAfterMin" min="5" max="240" value="60" onchange="saveNotificationSettings()"></div>
+          </div>
+
+          <h3 class="settings-h"><span data-icon="bell" data-icon-size="16"></span> مواعيد التنبيه والإشعارات</h3>
+          <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifEnabled" onchange="saveNotificationSettings()"><span>تفعيل التنبيهات الصوتية والإشعارات</span></label></div>
+
+          <div class="form-field">
+            <label>التنبيهات قبل موعد الحصة</label>
+            <div id="notifRemindersList" class="notif-reminders-chips"></div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <input type="number" id="newNotifReminderVal" min="1" max="1440" placeholder="المدة" style="flex:1;min-width:90px">
+              <select id="newNotifReminderUnit" style="flex:0 0 95px">
+                <option value="1">دقيقة</option>
+                <option value="60">ساعة</option>
+              </select>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="addNotifReminder()" style="padding:10px 14px"><span data-icon="plus" data-icon-size="12"></span> إضافة</button>
+            </div>
+          </div>
+
+          <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifAtStart" onchange="saveNotificationSettings()"><span>التنبيه عند بدء الحصة تماماً</span></label></div>
+
+          <h3 class="settings-h"><span data-icon="file-text" data-icon-size="16"></span> تنبيه عدم حفظ التقرير (صامت)</h3>
+          <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifMissingReportEnabled" onchange="saveNotificationSettings()"><span>إشعار صامت إذا لم يُحفظ التقرير بعد الحصة</span></label></div>
+          <div class="form-field"><label>يظهر الإشعار الصامت بعد بدء الحصة بـ (دقيقة)</label><input type="number" id="notifMissingReportAfter" min="5" max="720" value="60" onchange="saveNotificationSettings()"></div>
+
+          <h3 class="settings-h"><span data-icon="volume-2" data-icon-size="16"></span> الصوت والاهتزاز وإشعارات النظام</h3>
           <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifSound" onchange="saveNotificationSettings()"><span><span data-icon="volume-2" data-icon-size="14"></span> تنبيه صوتي</span></label></div>
-          <div class="form-field"><label>نوع النغمة</label><select id="notifSoundType" onchange="saveNotificationSettings()"><option value="1">نغمة ١</option><option value="2">نغمة ٢</option><option value="3">نغمة ٣</option></select></div>
-          <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifRepeat" onchange="saveNotificationSettings()"><span><span data-icon="refresh" data-icon-size="14"></span> تكرار الصوت</span></label></div>
+          <div class="form-field"><label>نوع النغمة</label><select id="notifSoundType" onchange="saveNotificationSettings()"><option value="1">نغمة هادئة</option><option value="2">نغمة مزدوجة</option><option value="3">رنين لطيف</option></select></div>
+          <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifRepeat" onchange="saveNotificationSettings()"><span><span data-icon="refresh" data-icon-size="14"></span> تكرار الصوت حتى الاستجابة</span></label></div>
           <div class="form-field"><label>كل كم ثانية</label><select id="notifRepeatInterval" onchange="saveNotificationSettings()"><option value="15">١٥ ثانية</option><option value="30">٣٠ ثانية</option><option value="60">دقيقة</option></select></div>
           <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifVibrate" onchange="saveNotificationSettings()"><span><span data-icon="vibrate" data-icon-size="14"></span> اهتزاز</span></label></div>
           <div class="form-field"><label>نمط الاهتزاز</label><select id="notifVibratePattern" onchange="saveNotificationSettings()"><option value="short">قصير</option><option value="long">طويل</option><option value="off">إيقاف</option></select></div>
-          <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="notifSystem" onchange="saveNotificationSettings()"><span><span data-icon="message-square" data-icon-size="14"></span> إشعارات النظام</span></label><button class="btn btn-secondary btn-sm" onclick="requestNotifPermission()" style="margin-top:8px;width:auto;padding:8px 14px">تفعيل الإذن</button></div>
+          <div class="form-field">
+            <label class="settings-checkbox"><input type="checkbox" id="notifSystem" onchange="saveNotificationSettings()"><span><span data-icon="message-square" data-icon-size="14"></span> إشعارات النظام (الهاتف / المتصفح)</span></label>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+              <span id="notifPermStatus" class="cfg-badge blue">—</span>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="requestNotifPermission()" style="width:auto;padding:8px 14px">تفعيل الإذن</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="testSystemNotification()" style="width:auto;padding:8px 14px">تجربة الإشعار</button>
+            </div>
+          </div>
           <div class="form-field"><label class="settings-checkbox"><input type="checkbox" id="quietEnabled" onchange="saveNotificationSettings()"><span><span data-icon="moon" data-icon-size="14"></span> ساعات الصمت</span></label></div>
           <div class="form-row-2">
             <div class="form-field"><label>من</label><input type="time" id="quietFrom" value="23:00" onchange="saveNotificationSettings()"></div>
             <div class="form-field"><label>إلى</label><input type="time" id="quietTo" value="07:00" onchange="saveNotificationSettings()"></div>
           </div>
-          <div class="btn-row"><button class="btn btn-secondary" onclick="testAlarmSound()" style="flex:1;min-width:120px"><span data-icon="volume-2" data-icon-size="14"></span> تجربة الصوت</button></div>
+          <div class="btn-row"><button type="button" class="btn btn-secondary" onclick="testAlarmSound()" style="flex:1;min-width:120px"><span data-icon="volume-2" data-icon-size="14"></span> تجربة الصوت</button></div>
         </div>
 
         <div class="settings-sub-panel" data-settings-panel="data">
@@ -404,7 +520,6 @@
             <button class="btn btn-secondary" onclick="openTrashModal()" style="width:100%;margin-bottom:12px"><span data-icon="trash-2" data-icon-size="14"></span> سلة المهملات</button>
             <button class="btn btn-danger" onclick="resetAllData()" style="width:100%;padding:12px 20px"><span data-icon="trash-2" data-icon-size="14"></span> مسح كل البيانات نهائيًا</button>
           </div>
-          <div class="last-backup-info" id="lastBackupInfo"></div>
 
           <h3 class="settings-h"><span data-icon="calendar" data-icon-size="16"></span> تصدير التقويم (.ics)</h3>
           <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 10px;line-height:1.6">صدّر حصصك إلى ملف <code style="background:var(--card-secondary-bg);padding:2px 6px;border-radius:4px">.ics</code>.</p>
@@ -417,6 +532,7 @@
           <h3 class="settings-h"><span data-icon="history" data-icon-size="16"></span> سجل النسخ الاحتياطية</h3>
           <div id="backupLogContainer"></div>
           <button class="btn btn-secondary" onclick="clearBackupLog()" style="font-size:.8rem;padding:8px 14px;margin-top:10px;width:auto"><span data-icon="trash-2" data-icon-size="12"></span> مسح السجل</button>
+        </div>
         </div>
       </div>
     </section>
@@ -442,7 +558,8 @@
   <div class="sheet-actions">
     <button class="btn btn-copy" onclick="copyReport()"><span data-icon="copy" data-icon-size="14"></span> نسخ النص</button>
     <button class="btn btn-primary" onclick="shareReportWhatsApp()" style="margin:0"><span data-icon="smartphone" data-icon-size="14"></span> إرسال واتساب</button>
-    <button class="btn btn-word" onclick="exportToWord()"><span data-icon="file-word" data-icon-size="14"></span> تحميل Word</button>
+    <button class="btn btn-secondary" onclick="shareReportTelegram()" style="margin:0"><span data-icon="send" data-icon-size="14"></span> إرسال تيليجرام</button>
+    <button class="btn btn-word" onclick="exportToWord()" style="display:none"><span data-icon="file-word" data-icon-size="14"></span> تحميل Word</button>
     <button class="btn btn-save" onclick="saveSession();closeReportSheet();" style="margin:0"><span data-icon="save" data-icon-size="14"></span> حفظ الحصة</button>
   </div>
 </div>

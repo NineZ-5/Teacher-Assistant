@@ -861,10 +861,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent-green);box-sha
 .browser-toast.show{opacity:1}
 
 /* ═══════════════ BOTTOM SHEET ═══════════════ */
-.bottom-sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);opacity:0;pointer-events:none;transition:opacity .3s;z-index:4998;display:none}
+.bottom-sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);opacity:0;pointer-events:none;transition:opacity .3s;z-index:4998;display:block}
 .bottom-sheet-overlay.open{opacity:1;pointer-events:auto}
-.bottom-sheet{position:fixed;bottom:0;left:0;right:0;background:var(--card-bg);border-top-left-radius:20px;border-top-right-radius:20px;box-shadow:0 -10px 40px rgba(0,0,0,.4);transform:translateY(100%);transition:transform .3s cubic-bezier(.16,1,.3,1);z-index:4999;max-height:92vh;display:none;flex-direction:column;will-change:transform}
-.bottom-sheet.open{transform:translateY(0)}
+.bottom-sheet{position:fixed;bottom:0;left:0;right:0;background:var(--card-bg);border-top-left-radius:20px;border-top-right-radius:20px;box-shadow:0 -10px 40px rgba(0,0,0,.4);transform:translateY(100%);pointer-events:none;transition:transform .3s cubic-bezier(.16,1,.3,1);z-index:4999;max-height:92vh;display:flex;flex-direction:column;will-change:transform}
+.bottom-sheet.open{transform:translateY(0);pointer-events:auto}
 .sheet-handle{width:44px;height:4px;background:var(--card-border-strong);border-radius:2px;margin:12px auto 6px;opacity:.6}
 .sheet-header{display:flex;justify-content:space-between;align-items:center;padding:8px 20px;border-bottom:1px solid var(--card-border)}
 .sheet-header h3{margin:0;font-size:1.02rem;color:var(--accent-green);font-weight:700}
@@ -872,7 +872,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent-green);box-sha
 .sheet-body{padding:15px 20px;overflow-y:auto;flex:1}
 .sheet-body textarea{min-height:200px;height:40vh;resize:vertical;font-family:'IBM Plex Sans Arabic',monospace;font-size:.88rem;line-height:1.7}
 .sheet-actions{padding:12px 20px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--card-border)}
-@media(min-width:1024px){.bottom-sheet,.bottom-sheet-overlay{display:none}}
+@media(min-width:1024px){.bottom-sheet,.bottom-sheet-overlay{display:none !important}}
 
 /* ═══════════════ NOTIFICATIONS ═══════════════ */
 .notification{position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(8px);background:var(--accent-green);color:#fff;padding:12px 24px;border-radius:24px;display:none;z-index:10000;font-weight:700;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:90vw;text-align:center;font-size:.88rem;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none}
@@ -1159,7 +1159,6 @@ html, body {
     min-width: 0 !important;
     width: 100% !important;
     max-width: 100% !important;
-    display: flex !important;
     gap: 6px !important;
   }
   .row-item > .range-inputs > input,
@@ -1637,3 +1636,227 @@ html, body {
 }
 .auth-header h2 { margin: 0 0 6px; font-size: 1.3rem; color: var(--text-primary); }
 .auth-header p { margin: 0; font-size: 0.85rem; color: var(--text-muted); }
+
+.app-clock-bar{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:4px 0 8px;margin-bottom:4px;
+}
+.app-clock-pill{
+  display:inline-flex;align-items:center;gap:6px;
+  background:var(--card-bg);border:1px solid var(--card-border);
+  border-radius:999px;padding:5px 12px;
+  font-size:.82rem;font-weight:700;color:var(--accent-green);
+  font-variant-numeric:tabular-nums;box-shadow:var(--shadow-sm);
+}
+.app-clock-tz{
+  font-size:.74rem;color:var(--text-muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.date-line-wrap{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+}
+.home-clock-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  background:var(--primary-soft);color:var(--accent-green);
+  border:1px solid var(--primary-ring);
+  border-radius:999px;padding:2px 9px;
+  font-size:.74rem;font-weight:700;
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+.lesson-time,.cal-list-item-time{
+  min-width:68px;white-space:nowrap;
+}
+
+/* ═══════════════ APP-LIKE PAGE NAVIGATION ═══════════════ */
+@keyframes pageSlideIn{
+  from{opacity:0;transform:translateY(6px)}
+  to{opacity:1;transform:none}
+}
+.page-slide-in{animation:pageSlideIn .18s ease-out}
+.nav-menu-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.nav-menu-item{
+  display:flex;align-items:center;gap:12px;width:100%;
+  padding:14px;background:var(--card-bg);
+  border:1px solid var(--card-border);border-radius:12px;
+  cursor:pointer;font-family:inherit;text-align:right;
+  color:var(--text-primary);
+  transition:border-color .15s,background .15s,transform .15s;
+}
+.nav-menu-item:hover{border-color:var(--accent-green);background:var(--card-secondary-bg);transform:translateX(-2px)}
+.nav-menu-item:active{transform:scale(.99)}
+.nav-menu-icon{
+  width:40px;height:40px;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  background:var(--primary-soft);color:var(--accent-green);
+}
+.nav-menu-icon.info{background:var(--info-bg);color:var(--accent-blue)}
+.nav-menu-icon.amber{background:var(--warning-bg);color:var(--accent-amber)}
+.nav-menu-icon.green{background:var(--success-bg);color:var(--success)}
+.nav-menu-body{flex:1;min-width:0}
+.nav-menu-title{font-weight:700;font-size:.94rem;color:var(--text-primary);margin-bottom:2px}
+.nav-menu-sub{font-size:.75rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav-menu-badge{
+  font-size:.74rem;font-weight:700;color:var(--accent-green);
+  background:var(--primary-soft);padding:3px 9px;border-radius:999px;
+  white-space:nowrap;flex-shrink:0;
+}
+.nav-menu-arrow{color:var(--text-muted);opacity:.65;flex-shrink:0;display:flex;align-items:center}
+.subpage-header{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  margin-bottom:16px;padding-bottom:12px;
+  border-bottom:1px solid var(--card-border);flex-wrap:wrap;
+}
+.subpage-header h2{
+  margin:0;font-size:1.05rem;font-weight:700;color:var(--accent-green);
+  flex:1;min-width:0;display:flex;align-items:center;gap:6px;
+}
+.settings-account-mini{
+  display:flex;align-items:center;gap:10px;
+  padding:12px 14px;background:var(--card-secondary-bg);
+  border:1px solid var(--card-border);border-radius:12px;
+  margin-bottom:14px;font-size:.84rem;
+}
+
+/* ═══════════════ NOTIFICATION BELL & CENTER ═══════════════ */
+.notif-bell-btn{
+  position:relative;width:36px;height:36px;border-radius:50%;
+  background:var(--card-bg);border:1px solid var(--card-border);
+  color:var(--text-primary);cursor:pointer;display:inline-flex;
+  align-items:center;justify-content:center;flex-shrink:0;padding:0;
+  box-shadow:var(--shadow-sm);transition:.15s;
+}
+.notif-bell-btn:hover{border-color:var(--accent-green);color:var(--accent-green)}
+.notif-bell-home-btn{position:relative}
+.notif-bell-badge{
+  position:absolute;top:-4px;left:-4px;min-width:18px;height:18px;
+  padding:0 5px;border-radius:999px;background:var(--accent-red);color:#fff;
+  font-size:.66rem;font-weight:700;display:flex;align-items:center;
+  justify-content:center;border:2px solid var(--bg-primary);line-height:1;
+}
+.notif-bell-badge.urgent{animation:bellPulse 1.8s ease-in-out infinite}
+@keyframes bellPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+.notif-reminders-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.notif-reminder-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:6px 10px;
+  background:var(--primary-soft);border:1px solid var(--primary-ring);
+  color:var(--accent-green);border-radius:999px;font-size:.8rem;font-weight:700;
+}
+.notif-reminder-chip button{
+  background:transparent;border:none;color:var(--accent-red);cursor:pointer;
+  font-size:1rem;line-height:1;padding:0 2px;font-weight:700;
+}
+.notif-center-section-title{
+  font-size:.82rem;font-weight:700;color:var(--accent-green);
+  margin:12px 0 8px;display:flex;align-items:center;gap:6px;
+}
+.notif-center-section-title:first-child{margin-top:0}
+.notif-center-item{
+  background:var(--card-secondary-bg);border:1px solid var(--card-border);
+  border-radius:12px;padding:12px;margin-bottom:8px;
+  display:flex;flex-direction:column;gap:8px;
+}
+.notif-center-item.urgent{border-color:var(--accent-amber);background:var(--warning-bg)}
+.notif-center-item.silent-report{border-style:dashed}
+.notif-center-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.notif-center-title{font-weight:700;font-size:.9rem;color:var(--text-primary)}
+.notif-center-meta{font-size:.76rem;color:var(--text-muted);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.notif-center-actions{display:flex;gap:6px;flex-wrap:wrap}
+
+/* ═══════════════ TICKTICK-STYLE CALENDAR & SCHEDULER ═══════════════ */
+.cal-top-toolbar{
+  display:flex;justify-content:space-between;align-items:center;
+  gap:8px;flex-wrap:wrap;margin-bottom:14px;
+}
+.cal-top-actions{display:flex;gap:6px;align-items:center;flex-shrink:0}
+.cal-cell.cal-clickable{cursor:pointer}
+.cal-cell.cal-clickable:hover{border-color:var(--accent-green)}
+.cal-weekly-day-header.cal-clickable{cursor:pointer;border-radius:6px;transition:.15s}
+.cal-weekly-day-header.cal-clickable:hover{background:var(--primary-soft);color:var(--accent-green)}
+.sched-weekdays-grid{
+  display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:4px;
+}
+@media(max-width:480px){
+  .sched-weekdays-grid{grid-template-columns:repeat(4,1fr)}
+}
+.sched-day-pill{
+  padding:8px 4px;border-radius:8px;border:1px solid var(--card-border);
+  background:var(--card-secondary-bg);color:var(--text-secondary);
+  font-family:inherit;font-size:.76rem;font-weight:700;cursor:pointer;
+  text-align:center;transition:.15s;
+}
+.sched-day-pill:hover{border-color:var(--accent-green)}
+.sched-day-pill.active{
+  background:var(--accent-green);color:#fff;border-color:var(--accent-green);
+  box-shadow:0 2px 8px var(--primary-ring);
+}
+
+/* ═══════════════ MOBILE VISUAL POLISH ═══════════════ */
+@media(max-width:1023px){
+  .report-side{display:none !important}
+  .sheet-actions{padding-bottom:max(12px,env(safe-area-inset-bottom,12px))}
+  input[type="date"],input[type="time"]{min-width:0;max-width:100%}
+}
+
+@media(max-width:600px){
+  /* 1) شريط التقويم وخلايا الشهر */
+  .cal-top-toolbar{flex-direction:column;align-items:stretch;gap:8px}
+  .cal-top-toolbar .cal-view-switcher{max-width:none;width:100% !important;min-width:0 !important}
+  .cal-top-toolbar .cal-view-btn{padding:8px 4px;font-size:.8rem}
+  .cal-top-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}
+  .cal-top-actions .btn{width:100% !important;margin:0 !important;justify-content:center;min-height:38px}
+  .cal-cell{min-height:68px;height:68px}
+  .cal-m-lesson{font-size:.6rem;line-height:1.25;padding:1px 3px}
+  .cal-m-more{font-size:.58rem}
+
+  /* 2) شريط المكتبة (المجموعات والطلاب) */
+  .lib-toolbar{flex-direction:column;align-items:stretch;gap:10px}
+  .lib-toolbar-actions{display:grid !important;grid-template-columns:1fr 1fr;gap:8px;width:100%}
+  #groupSearch,#studentSearch{grid-column:1/-1;width:100% !important;min-height:42px}
+  .lib-toolbar-actions .btn{width:100% !important;margin:0 !important;min-height:40px;justify-content:center;font-size:.82rem !important}
+  .lib-toolbar-actions .btn-primary{grid-column:1/-1;min-height:42px}
+
+  /* 3) رأس بطاقة الطالب وحقوله وصفوفه */
+  .student-header{flex-wrap:wrap;gap:8px;align-items:center}
+  .student-avatar{width:34px;height:34px;font-size:.82rem}
+  .student-info{flex:1 1 calc(100% - 46px);min-width:0;max-width:none;overflow:visible}
+  .student-info .input-with-btn{width:100%;gap:6px}
+  .student-info .input-with-btn .student-name{width:auto !important;flex:1 1 0 !important;min-width:0 !important}
+  .student-header .attendance-select{width:100%;max-width:none;text-align:center;padding:8px 10px}
+
+  .student-card-footer{display:grid !important;grid-template-columns:1fr 1fr;gap:8px !important}
+  .student-card-footer .student-gender,
+  .student-card-footer .student-level{max-width:none !important;width:100% !important}
+  .student-card-footer .student-notes{grid-column:1/-1;min-width:0 !important;width:100% !important}
+
+  .row-item{
+    background:var(--card-secondary-bg);
+    border:1px solid var(--card-border);
+    border-radius:10px;
+    padding:8px 8px 8px 42px !important;
+    margin-bottom:8px;
+  }
+  .row-item select,.row-item input{background:var(--card-bg)}
+  .row-item > .remove-sm{top:8px !important;left:6px !important}
+
+  /* 4) أزرار التقرير عربي/إنجليزي */
+  .action-buttons .btn-lg{font-size:14px !important;padding:11px 8px !important;white-space:nowrap}
+
+  /* 5) رأس التفاصيل والتنقل */
+  .detail-header{gap:8px}
+  .detail-header > button:first-child{order:1}
+  .detail-header > .btn-row{order:1;margin-right:auto}
+  .detail-header h2{order:2;flex:1 1 100%;font-size:1.05rem}
+  .nav-menu-item{padding:12px;gap:10px}
+  .nav-menu-icon{width:36px;height:36px}
+  .nav-menu-badge{font-size:.68rem;padding:2px 7px}
+
+  /* 6) التوب بار بالرئيسية والمودال */
+  .top-bar{align-items:flex-start;gap:8px;margin-bottom:14px}
+  .top-bar-actions{gap:6px}
+  .top-bar .avatar-btn{width:36px;height:36px}
+  .modal-overlay{padding:12px}
+  .modal-header{padding:14px 16px}
+  .modal-body{padding:14px 16px}
+  .modal-footer{padding:10px 14px;justify-content:stretch}
+  .modal-footer .btn{flex:1 1 auto;min-width:82px;margin:0 !important}
+}

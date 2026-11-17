@@ -36,7 +36,9 @@ import {
   getTimezoneOffsetMinutes,
   convertTimeBetweenTimezones,
   formatUtcOffset,
-  isDSTActive
+  isDSTActive,
+  formatTimeDisplay,
+  getCurrentClockText
 } from './timezone.js';
 
 import {
@@ -124,9 +126,17 @@ import {
   getActiveFullTexts,
   parseEditedReportForStudent,
   generateMonthlyDraft,
+  generateMonthlyDraftAsync,
   exportToWordFromState,
   exportToWord
 } from './reports.js';
+
+import {
+  REPORT_I18N,
+  translateTextsOnline,
+  testGeminiApiKey,
+  clearTranslationCache
+} from './i18n.js';
 
 import {
   browserState,
@@ -379,12 +389,32 @@ export var currentHiddenStaticIds = [];
 if (typeof window !== 'undefined') window.currentHiddenStaticIds = currentHiddenStaticIds;
 export var reminderInterval = null;
 export var dismissedReminders = {};
-export var currentReminderInfo = null;
-export var alarmBeepedEvents = {};
+export var _snoozedNotifs = {};
+export var _activeBellData = { lessonAlerts: [], missingReports: [] };
 export var _tzPickCallback = null;
 export var _tzPrevBody = null, _tzPrevFooter = null, _tzPrevTitle = null;
 export var _repeatBeepInterval = null;
 export var _sessionViewUrls = [];
+export var currentGroupSubPage = null;    // null | 'students' | 'schedule' | 'sessions' | 'monthly' | 'custom'
+export var currentStudentSubPage = null;  // null | 'sessions' | 'monthly' | 'custom'
+export var currentSettingsSubPage = null; // null | 'account' | 'appearance' | 'notifications' | 'data'
+var _handlingPopState = false;
+var _currentMainTab = 'home';
+
+export function pushAppNavState(tag){
+  if (_handlingPopState) return;
+  try {
+    if (window.history && typeof window.history.pushState === 'function') {
+      window.history.pushState({ appNav: true, tag: tag || '' }, '');
+    }
+  } catch(e){}
+}
+
+export function openInAppBrowserWithNav(url){
+  var bo = document.getElementById('browserOverlay');
+  if (!bo || bo.style.display !== 'flex') pushAppNavState('browser');
+  return openInAppBrowser(url);
+}
 
 /* ═══════════════ TIMEZONE PICKER ═══════════════ */
 export function openTimezonePicker(callback){
@@ -512,12 +542,36 @@ export function enterLessonAndOpenLink(groupId, dateISO, time){
   }
 }
 
-export function showPreviousLesson(groupId, beforeDate){
+export var _currentLessonContext = null;
+
+export function setCurrentLessonContext(ctx){
+  _currentLessonContext = ctx ? deepClone(ctx) : null;
+}
+
+export function showPreviousLesson(groupId, beforeDate, targetStudentIds){
   var card = document.getElementById('previousLessonCard');
   var content = document.getElementById('previousLessonContent');
   if (!card || !content) return;
   var sessions = data.sessions.filter(function(s){ return s.groupId === groupId && s.date && s.report; });
   if (beforeDate) sessions = sessions.filter(function(s){ return s.date < beforeDate; });
+  if (Array.isArray(targetStudentIds) && targetStudentIds.length) {
+    var targetNormNames = targetStudentIds.map(function(sid){
+      var st = (data.students || []).find(function(x){ return x.id === sid; });
+      return st ? normalize(st.name || '') : '';
+    }).filter(Boolean);
+    sessions = sessions.filter(function(s){
+      if (Array.isArray(s.studentIds) && s.studentIds.length) {
+        return s.studentIds.some(function(sid){ return targetStudentIds.indexOf(sid) !== -1; });
+      }
+      if (s.data && Array.isArray(s.data.students) && targetNormNames.length) {
+        return s.data.students.some(function(st){
+          var nm = normalize(st.name || '');
+          return nm && targetNormNames.indexOf(nm) !== -1;
+        });
+      }
+      return false;
+    });
+  }
   sessions.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
   var prev = sessions[0];
   if (!prev) { card.style.display = 'none'; content.textContent = ''; return; }
@@ -535,12 +589,87 @@ export function saveTeacherDefault(){
   showNotify('✅ تم الحفظ');
 }
 
+export function saveTeacherGender(){
+  var sel = document.getElementById('settingsTeacherGender');
+  data.settings.teacherGender = (sel && sel.value === 'female') ? 'female' : 'male';
+  saveData();
+  showNotify('✅ تم حفظ الصفة');
+}
+
+export function saveGeminiApiKey(){
+  var el = document.getElementById('settingsGeminiKey');
+  data.settings.geminiApiKey = el ? el.value.trim() : '';
+  saveData();
+  showNotify('✅ تم حفظ مفتاح الترجمة');
+}
+
+export async function testGeminiKeyFromSettings(){
+  var el = document.getElementById('settingsGeminiKey');
+  var key = (el && el.value.trim()) ? el.value.trim() : (data.settings.geminiApiKey || '');
+  var btn = document.getElementById('btnTestGeminiKey');
+  if (btn) btn.disabled = true;
+  showNotify('⏳ جاري اختبار المفتاح...');
+  try {
+    var res = await testGeminiApiKey(key);
+    if (res && res.ok) {
+      if (el && el.value.trim() && data.settings.geminiApiKey !== el.value.trim()) {
+        data.settings.geminiApiKey = el.value.trim();
+        saveData();
+      }
+      showNotify('✅ المفتاح يعمل بنجاح');
+    } else {
+      showNotify('❌ ' + ((res && res.error) ? res.error : 'فشل الاختبار'));
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+export function clearTransCacheFromSettings(){
+  clearTranslationCache();
+  showNotify('✅ تم مسح ذاكرة الترجمة المحفوظة');
+}
+
 export function saveTeacherTimezone(){
   var v = document.getElementById('settingsTimezone').value.trim();
   data.settings.teacherTimezone = v;
   saveData();
+  updateLiveClock();
   showNotify('✅ تم الحفظ');
   if(document.getElementById('tab-calendar').classList.contains('active')) renderCalendar();
+}
+
+export function updateLiveClock(){
+  var txt = getCurrentClockText();
+  var homeTimeEl = document.getElementById('homeClockTime');
+  if (homeTimeEl) homeTimeEl.textContent = txt;
+
+  var appTimeEl = document.getElementById('appClockTime');
+  if (appTimeEl) appTimeEl.textContent = txt;
+
+  var tzEl = document.getElementById('appClockTz');
+  if (tzEl) {
+    var tz = getTeacherTimezone();
+    tzEl.textContent = tz ? formatUtcOffset(tz) : '';
+  }
+}
+
+var _liveClockTimer = null;
+export function startLiveClock(){
+  updateLiveClock();
+  if (_liveClockTimer) clearInterval(_liveClockTimer);
+  _liveClockTimer = setInterval(updateLiveClock, 15000);
+}
+
+export function saveTimeFormat(){
+  var sel = document.getElementById('settingsTimeFormat');
+  data.settings.timeFormat = (sel && sel.value === '24h') ? '24h' : '12h';
+  saveData();
+  updateLiveClock();
+  renderHome();
+  var calTab = document.getElementById('tab-calendar');
+  if (calTab && calTab.classList.contains('active')) renderCalendar();
+  showNotify('✅ تم حفظ نظام الوقت');
 }
 
 export function detectTimezone(){
@@ -652,38 +781,71 @@ export function refreshConstantsUI(ownerType, ownerId){
 
 /* ═══════════════ TABS ═══════════════ */
 export function switchTab(name){
+  if (name !== 'home' && _currentMainTab === 'home') pushAppNavState('tab-' + name);
+  _currentMainTab = name;
   document.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.remove('active'); });
   document.querySelectorAll('.tab-btn[data-tab]').forEach(function(b){ b.classList.toggle('active', b.dataset.tab === name); });
   var panel = document.getElementById('tab-' + name);
   if(panel) panel.classList.add('active');
+  var clockBar = document.getElementById('appClockBar');
+  if (clockBar) clockBar.style.display = (name === 'home') ? 'none' : 'flex';
+  updateLiveClock();
   window.scrollTo(0, 0);
   if(name === 'home'){ renderHome(); }
   if(name === 'calendar'){ renderCalendar(); }
   if(name === 'library'){ backToGroups(); backToStudents(); renderGroupsList(); renderStudentsList(); }
   if(name === 'settings'){
+    backToSettingsMenu();
     var accEmail = document.getElementById('accountStatusEmail');
-    if (accEmail) {
-      accEmail.innerHTML = 'جاري التحقق...';
+    var accMini = document.getElementById('settingsAccountMiniText');
+    if (accEmail || accMini) {
+      if (accEmail) accEmail.innerHTML = 'جاري التحقق...';
+      if (accMini) accMini.innerHTML = 'جاري التحقق...';
       if (window.supabaseClient) {
         window.supabaseClient.auth.getSession().then(function(res) {
           var u = res.data.session ? res.data.session.user : null;
           if (u) {
             window.currentUser = u;
-            accEmail.innerHTML = 'مسجل الدخول: <span style="color:var(--accent-green)">' + u.email + '</span>';
+            var htmlLogged = 'مسجل الدخول: <span style="color:var(--accent-green)">' + escapeHtml(u.email) + '</span>';
+            if (accEmail) accEmail.innerHTML = htmlLogged;
+            if (accMini) accMini.innerHTML = htmlLogged;
           } else {
-            accEmail.innerHTML = '<span style="color:var(--accent-amber)">وضع محلي (غير مسجل)</span>';
+            var htmlLocal = '<span style="color:var(--accent-amber)">وضع محلي (غير مسجل)</span>';
+            if (accEmail) accEmail.innerHTML = htmlLocal;
+            if (accMini) accMini.innerHTML = htmlLocal;
           }
         }).catch(function() {
-          accEmail.innerHTML = '<span style="color:var(--accent-amber)">وضع محلي (غير مسجل)</span>';
+          var htmlLocal = '<span style="color:var(--accent-amber)">وضع محلي (غير مسجل)</span>';
+          if (accEmail) accEmail.innerHTML = htmlLocal;
+          if (accMini) accMini.innerHTML = htmlLocal;
         });
       } else {
-        accEmail.innerHTML = '<span style="color:var(--accent-amber)">وضع محلي (غير مسجل)</span>';
+        var htmlLocal = '<span style="color:var(--accent-amber)">وضع محلي (غير مسجل)</span>';
+        if (accEmail) accEmail.innerHTML = htmlLocal;
+        if (accMini) accMini.innerHTML = htmlLocal;
       }
     }
     document.getElementById('settingsTeacher').value = data.settings.teacherName || '';
+    var stGender = document.getElementById('settingsTeacherGender');
+    if (stGender) stGender.value = data.settings.teacherGender || 'male';
     document.getElementById('settingsTimezone').value = data.settings.teacherTimezone || '';
+    var stTimeFmt = document.getElementById('settingsTimeFormat');
+    if (stTimeFmt) stTimeFmt.value = data.settings.timeFormat || '12h';
+    var stGemini = document.getElementById('settingsGeminiKey');
+    if (stGemini) stGemini.value = data.settings.geminiApiKey || '';
+    var ncBefore = document.getElementById('nowCardBeforeMin');
+    if (ncBefore) ncBefore.value = String(typeof data.settings.nowCardBeforeMin === 'number' ? data.settings.nowCardBeforeMin : 30);
+    var ncAfter = document.getElementById('nowCardAfterMin');
+    if (ncAfter) ncAfter.value = String(typeof data.settings.nowCardAfterMin === 'number' ? data.settings.nowCardAfterMin : 60);
     document.getElementById('notifEnabled').checked = data.settings.notifEnabled !== false;
-    document.getElementById('notifMinutes').value = String(data.settings.notifMinutes || 15);
+    var nAtStart = document.getElementById('notifAtStart');
+    if (nAtStart) nAtStart.checked = data.settings.notifAtStart !== false;
+    var nMissEn = document.getElementById('notifMissingReportEnabled');
+    if (nMissEn) nMissEn.checked = data.settings.notifMissingReportEnabled !== false;
+    var nMissAfter = document.getElementById('notifMissingReportAfter');
+    if (nMissAfter) nMissAfter.value = String(typeof data.settings.notifMissingReportAfter === 'number' ? data.settings.notifMissingReportAfter : 60);
+    renderNotifRemindersSettings();
+    updateNotifPermStatus();
     document.getElementById('notifSound').checked = data.settings.notifSound !== false;
     document.getElementById('notifVibrate').checked = data.settings.notifVibrate !== false;
     document.getElementById('notifSystem').checked = data.settings.notifSystem === true;
@@ -713,15 +875,57 @@ export function switchLibSub(sub){
 }
 
 export function switchSettingsSub(sub){
-  document.querySelectorAll('.settings-sub-tab').forEach(function(b){
-    b.classList.toggle('active', b.dataset.settingsSub === sub);
-  });
+  var titles = {
+    account: 'الحساب والملف الشخصي',
+    appearance: 'المظهر والتصميم',
+    notifications: 'التنبيهات',
+    data: 'البيانات والمزامنة'
+  };
+  if (!currentSettingsSubPage) pushAppNavState('settings-' + sub);
+  currentSettingsSubPage = sub;
+
+  var menu = document.getElementById('settingsMenuPage');
+  var wrap = document.getElementById('settingsSubPageWrapper');
+  var titleEl = document.getElementById('settingsSubPageTitle');
+  if (menu) menu.style.display = 'none';
+  if (wrap) {
+    wrap.style.display = 'block';
+    wrap.classList.remove('page-slide-in');
+    void wrap.offsetWidth;
+    wrap.classList.add('page-slide-in');
+  }
+  if (titleEl) titleEl.textContent = titles[sub] || 'الإعدادات';
+
   document.querySelectorAll('.settings-sub-panel').forEach(function(p){
     p.classList.toggle('active', p.dataset.settingsPanel === sub);
   });
+  window.scrollTo(0, 0);
+  if (sub === 'notifications') {
+    renderNotifRemindersSettings();
+    updateNotifPermStatus();
+  }
   if (sub === 'data' && typeof updateStorageInfo === 'function') {
     setTimeout(updateStorageInfo, 100);
   }
+  hydrateIcons(wrap || document.getElementById('tab-settings'));
+}
+
+export function backToSettingsMenu(){
+  currentSettingsSubPage = null;
+  var menu = document.getElementById('settingsMenuPage');
+  var wrap = document.getElementById('settingsSubPageWrapper');
+  if (wrap) wrap.style.display = 'none';
+  if (menu) {
+    menu.style.display = 'block';
+    menu.classList.remove('page-slide-in');
+    void menu.offsetWidth;
+    menu.classList.add('page-slide-in');
+  }
+  document.querySelectorAll('.settings-sub-panel').forEach(function(p){
+    p.classList.remove('active');
+  });
+  window.scrollTo(0, 0);
+  hydrateIcons(menu || document.getElementById('tab-settings'));
 }
 
 export function switchLessonSub(sub){
@@ -746,11 +950,14 @@ export function switchLessonSub(sub){
 
 /* ═══════════════ MODALS & SHEETS ═══════════════ */
 export function openGenericModal(title, bodyHTML, footerHTML){
+  var modalEl = document.getElementById('genericModal');
+  var wasOpen = modalEl && modalEl.classList.contains('active');
+  if (!wasOpen) pushAppNavState('modal');
   document.getElementById('genericModalTitle').innerHTML = title;
   document.getElementById('genericModalBody').innerHTML = bodyHTML;
   document.getElementById('genericModalFooter').innerHTML = footerHTML;
-  document.getElementById('genericModal').classList.add('active');
-  hydrateIcons(document.getElementById('genericModal'));
+  modalEl.classList.add('active');
+  hydrateIcons(modalEl);
 }
 
 export function closeGenericModal(){
@@ -764,10 +971,12 @@ export function closeGenericModal(){
 document.addEventListener('click', function(e){ if(e.target && e.target.id === 'genericModal') closeGenericModal(); });
 
 export function openReportSheet(){
+  var sheetEl = document.getElementById('reportSheet');
+  if (sheetEl && !sheetEl.classList.contains('open')) pushAppNavState('sheet');
   var so = document.getElementById('sheetOutput');
   var out = document.getElementById('output');
   if(so && out) so.value = out.value;
-  document.getElementById('reportSheet').classList.add('open');
+  sheetEl.classList.add('open');
   document.getElementById('sheetOverlay').classList.add('open');
 }
 
@@ -803,19 +1012,30 @@ export function renderStudents(){
 }
 
 export function buildStudentCardHTML(i){
+  var activeTypes = getCardEffectiveRowTypes(null);
+  var studyTypes = activeTypes.filter(function(t){ return t.section === 'study'; });
+  var hwTypes = activeTypes.filter(function(t){ return t.section === 'homework'; });
+  var studyHtml = studyTypes.map(function(t){ return renderRow('study', t.name, t.form, activeTypes); }).join('');
+  var hwHtml = hwTypes.map(function(t){ return renderRow('homework', t.name, t.form, activeTypes); }).join('');
   return '<div class="student-card student-form-card" data-index="' + i + '">'
     + '<div class="student-header">'
     + '<div class="student-avatar">' + (i+1) + '</div>'
     + '<div class="student-info">'
-    + '<input type="text" class="student-name" placeholder="اسم الطالب">'
+    + '<div class="input-with-btn" style="align-items:center">'
+    + '<input type="text" class="student-name" placeholder="اسم الطالب" style="flex:1;min-width:0">'
+    + '<button type="button" class="icon-btn" onclick="openStudentPicker(this)" title="اختيار من طلاب المجموعة" style="width:32px;height:32px">' + svgIcon('users', 14) + '</button>'
+    + '</div>'
     + '</div>'
     + '<select class="attendance-select student-attendance" onchange="updateAbsenceClass(this.closest(\'.student-card\'))">'
     + '<option value="present">حاضر</option><option value="excused">بعذر</option><option value="absent">غائب</option>'
     + '</select>'
     + '</div>'
-    + '<div class="row-label">' + svgIcon('book-open', 12) + ' دراسة اليوم</div>'
+    + '<div class="row-label" style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+    + '<span>' + svgIcon('book-open', 12) + ' دراسة اليوم</span>'
+    + '<button type="button" class="btn btn-secondary btn-sm" onclick="openQuickRowTypesModal(this)" title="تخصيص أنواع السطور" style="padding:3px 9px;font-size:.75rem;gap:4px">' + svgIcon('list', 12) + ' أنواع السطور</button>'
+    + '</div>'
     + '<div class="quran-block study-quran-block">'
-    + '<div class="rows-container study-rows-container">' + renderRow('study','تسميع جديد') + renderRow('study','تسميع مراجعة') + renderRow('study','قراءة') + '</div>'
+    + '<div class="rows-container study-rows-container">' + studyHtml + '</div>'
     + '<button class="add-row-btn" onclick="addDynamicRow(this,\'study\')">' + svgIcon('plus', 12) + ' إضافة سطر</button>'
     + '</div>'
     + '<div class="arabic-block study-arabic-block" style="margin-top:10px">'
@@ -830,7 +1050,7 @@ export function buildStudentCardHTML(i){
     + '</div>'
     + '<div class="row-label homework-label" style="margin-top:14px">' + svgIcon('bookmark', 12) + ' المطلوب (الواجب)</div>'
     + '<div class="quran-block homework-quran-block">'
-    + '<div class="rows-container homework-rows-container">' + renderRow('homework','حفظ جديد') + renderRow('homework','مراجعة') + '</div>'
+    + '<div class="rows-container homework-rows-container">' + hwHtml + '</div>'
     + '<button class="add-row-btn" onclick="addDynamicRow(this,\'homework\')">' + svgIcon('plus', 12) + ' إضافة سطر</button>'
     + '</div>'
     + '<div class="arabic-block homework-arabic-block" style="margin-top:10px">'
@@ -843,7 +1063,8 @@ export function buildStudentCardHTML(i){
     + '<div class="arabic-rows-container homework-islamic-rows-container">' + renderArabicRow('homework','مثال: مذاكرة الدرس') + '</div>'
     + '<button class="add-row-btn" onclick="addIslamicRow(this,\'homework\')">' + svgIcon('plus', 12) + ' إضافة سطر</button>'
     + '</div>'
-    + '<div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+    + '<div class="student-card-footer" style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+    + '<select class="student-gender student-level-select" onchange="updateStudentCardGender(this.closest(\'.student-card\'))" style="max-width:92px"><option value="male">طالب</option><option value="female">طالبة</option></select>'
     + '<select class="student-level student-level-select"><option>ممتاز</option><option>جيد جدًّا</option><option>جيد</option><option>مقبول</option><option>ضعيف</option></select>'
     + '<input type="text" class="student-notes" placeholder="ملاحظات (اختياري)" style="flex:1;min-width:150px;font-size:.82rem;padding:7px 10px">'
     + '</div>'
@@ -857,11 +1078,25 @@ export function updateAbsenceClass(card){
   card.classList.toggle('absent', sel.value !== 'present');
 }
 
+export function updateStudentCardGender(card){
+  if(!card) return;
+  var gSel = card.querySelector('.student-gender');
+  var aSel = card.querySelector('.student-attendance');
+  if(!gSel || !aSel) return;
+  var isFemale = gSel.value === 'female';
+  var curVal = aSel.value;
+  var opts = aSel.options;
+  if(opts[0]) opts[0].text = isFemale ? 'حاضرة' : 'حاضر';
+  if(opts[1]) opts[1].text = 'بعذر';
+  if(opts[2]) opts[2].text = isFemale ? 'غائبة' : 'غائب';
+  aSel.value = curVal;
+}
+
 /* ═══════════════ ROW ITEMS ═══════════════ */
-export function renderRow(sectionType, defaultLabel, form){
+export function renderRow(sectionType, defaultLabel, form, rowTypesOverride){
   form = form || 'surah-ayat';
   var isStudy = sectionType === 'study';
-  var options = buildTypeOptions(isStudy, defaultLabel);
+  var options = buildTypeOptions(isStudy, defaultLabel, rowTypesOverride);
   var removeBtn = '<button class="remove-sm" onclick="removeRow(this)" title="حذف">' + svgIcon('x', 14) + '</button>';
   if(form === 'free-text'){
     return '<div class="row-item surah-row free-text-row">'
@@ -890,7 +1125,19 @@ export function renderArabicRow(sectionType, placeholder){
 
 export function addArabicRow(btn, sectionType){ var c = btn.previousElementSibling; if(!c) return; var t = document.createElement('div'); t.innerHTML = renderArabicRow(sectionType); c.appendChild(t.firstElementChild); scheduleSaveDraft(); }
 export function addIslamicRow(btn, sectionType){ var c = btn.previousElementSibling; if(!c) return; var t = document.createElement('div'); var ph = sectionType === 'study' ? 'مثال: معنى الإسلام...' : 'مثال: مذاكرة الدرس'; t.innerHTML = renderArabicRow(sectionType, ph); c.appendChild(t.firstElementChild); scheduleSaveDraft(); }
-export function addDynamicRow(btn, type){ var c = btn.previousElementSibling; if(!c) return; var t = document.createElement('div'); t.innerHTML = renderRow(type, type==='study'?'تسميع جديد':'حفظ جديد'); c.appendChild(t.firstElementChild); scheduleSaveDraft(); }
+export function addDynamicRow(btn, type){
+  var c = btn.previousElementSibling; if(!c) return;
+  var card = btn.closest('.student-card');
+  var types = getCardEffectiveRowTypes(card);
+  var secTypes = types.filter(function(t){ return t.section === type; });
+  if(!secTypes.length){ showNotify('لا توجد أنواع سطور مضافة لهذا القسم'); return; }
+  var first = secTypes[0];
+  var t = document.createElement('div');
+  t.innerHTML = renderRow(type, first.name, first.form, types);
+  c.appendChild(t.firstElementChild);
+  hydrateIcons(c);
+  scheduleSaveDraft();
+}
 
 export function toggleRangeType(sel){
   var row = sel.closest('.row-item');
@@ -982,19 +1229,23 @@ export function collectFormState(){
   var state = {
     group: document.getElementById('groupName').value,
     teacher: document.getElementById('teacherName').value,
+    teacherGender: (data.settings && data.settings.teacherGender) || 'male',
     date: document.getElementById('reportDate').value,
     lesson: document.getElementById('lessonOrder').value,
     duration: document.getElementById('duration').value,
     subject: getSubjectString(),
     subjects: { quran: currentSubjects.quran, arabic: currentSubjects.arabic, islamic: currentSubjects.islamic },
     hiddenStaticIds: currentHiddenStaticIds.slice(),
+    lessonContext: _currentLessonContext ? deepClone(_currentLessonContext) : null,
     students: []
   };
   document.querySelectorAll('.student-card').forEach(function(c){
     var st = {
       name: c.querySelector('.student-name').value,
+      gender: (c.querySelector('.student-gender')||{}).value || 'male',
       attendance: c.querySelector('.student-attendance').value,
       level: (c.querySelector('.student-level')||{}).value || 'ممتاز',
+      rowTypes: Array.isArray(c._lessonRowTypes) ? deepClone(c._lessonRowTypes) : null,
       studyRows: [], homeworkRows: [],
       arabicStudyRows: [], arabicHomeworkRows: [],
       islamicStudyRows: [], islamicHomeworkRows: [],
@@ -1045,6 +1296,7 @@ export function restoreDraft(){
 }
 
 export function applyState(state){
+  _currentLessonContext = (state && state.lessonContext) ? deepClone(state.lessonContext) : null;
   document.getElementById('groupName').value = safe(state.group);
   document.getElementById('teacherName').value = safe(state.teacher);
   if(state.date) document.getElementById('reportDate').value = state.date;
@@ -1073,12 +1325,16 @@ export function applyState(state){
     var card = cards[i];
     if(!card) return;
     card.querySelector('.student-name').value = safe(st.name);
+    card._lessonRowTypes = Array.isArray(st.rowTypes) ? deepClone(st.rowTypes) : null;
+    var genderSel = card.querySelector('.student-gender');
+    if(genderSel) genderSel.value = st.gender || 'male';
+    updateStudentCardGender(card);
     card.querySelector('.student-attendance').value = st.attendance || 'present';
     var levelSel = card.querySelector('.student-level');
     if(levelSel) levelSel.value = st.level || 'ممتاز';
     updateAbsenceClass(card);
-    fillRows(card.querySelector('.study-rows-container'), st.studyRows || [], true);
-    fillRows(card.querySelector('.homework-rows-container'), st.homeworkRows || [], false);
+    fillRows(card.querySelector('.study-rows-container'), st.studyRows || [], true, card);
+    fillRows(card.querySelector('.homework-rows-container'), st.homeworkRows || [], false, card);
     fillArabicRows(card.querySelector('.study-arabic-rows-container'), st.arabicStudyRows || [], 'study');
     fillArabicRows(card.querySelector('.homework-arabic-rows-container'), st.arabicHomeworkRows || [], 'homework');
     fillArabicRows(card.querySelector('.study-islamic-rows-container'), st.islamicStudyRows || [], 'study', 'مثال: معنى الإسلام...');
@@ -1091,14 +1347,24 @@ export function applyState(state){
   updateLessonLinkBar();
 }
 
-export function fillRows(container, rows, isStudy){
+export function fillRows(container, rows, isStudy, card){
   if(!container) return;
+  card = card || (container.closest ? container.closest('.student-card') : null);
+  var cardTypes = getCardEffectiveRowTypes(card);
+  var sec = isStudy ? 'study' : 'homework';
   container.innerHTML = '';
-  if(!rows.length){ container.innerHTML = renderRow(isStudy?'study':'homework', isStudy?'تسميع جديد':'حفظ جديد'); return; }
+  if(!rows.length){
+    var secTypes = cardTypes.filter(function(t){ return t.section === sec; });
+    if(secTypes.length){
+      container.innerHTML = renderRow(sec, secTypes[0].name, secTypes[0].form, cardTypes);
+      hydrateIcons(container);
+    }
+    return;
+  }
   rows.forEach(function(r){
     var form = r.form || 'surah-ayat';
     var wrap = document.createElement('div');
-    wrap.innerHTML = renderRow(isStudy?'study':'homework', r.type, form);
+    wrap.innerHTML = renderRow(sec, r.type, form, cardTypes);
     var row = wrap.firstElementChild;
     if(!row) return;
     if(form === 'free-text'){
@@ -1127,6 +1393,7 @@ export function fillRows(container, rows, isStudy){
     }
     container.appendChild(row);
   });
+  hydrateIcons(container);
 }
 
 export function fillArabicRows(container, rows, sectionType, placeholder){
@@ -1158,10 +1425,14 @@ export function openGroupPicker(){
   openGenericModal('اختر مجموعة', body, '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button>');
 }
 
-export function pickGroup(groupId){
+export function pickGroup(groupId, targetStudentIds, keepContext){
   var g = data.groups.find(function(x){ return x.id === groupId; });
   if(!g) return;
+  if (!keepContext) _currentLessonContext = null;
   var sts = data.students.filter(function(s){ return s.groupId === groupId; });
+  if (Array.isArray(targetStudentIds) && targetStudentIds.length) {
+    sts = sts.filter(function(s){ return targetStudentIds.indexOf(s.id) !== -1; });
+  }
   document.getElementById('groupName').value = g.name;
   if(g.teacherName) document.getElementById('teacherName').value = g.teacherName;
   currentCustomRowTypes = (g.reportSettings && g.reportSettings.customRowTypes) || [];
@@ -1169,11 +1440,36 @@ export function pickGroup(groupId){
   setStudentCount(Math.max(1, sts.length));
   setTimeout(function(){
     var inputs = document.querySelectorAll('.student-name');
-    sts.forEach(function(s, i){ if(inputs[i]) inputs[i].value = s.name; });
+    var cards = document.querySelectorAll('.student-card');
+    if(sts.length){
+      sts.forEach(function(s, i){
+        if(inputs[i]) inputs[i].value = s.name;
+        if(cards[i]){
+          cards[i]._lessonRowTypes = null;
+          var gSel = cards[i].querySelector('.student-gender');
+          if(gSel) gSel.value = s.gender || 'male';
+          updateStudentCardGender(cards[i]);
+          var eff = getEffectiveRowTypes(s, g);
+          var sc = cards[i].querySelector('.study-rows-container');
+          var hc = cards[i].querySelector('.homework-rows-container');
+          if(sc) sc.innerHTML = eff.filter(function(t){ return t.section === 'study'; }).map(function(t){ return renderRow('study', t.name, t.form, eff); }).join('');
+          if(hc) hc.innerHTML = eff.filter(function(t){ return t.section === 'homework'; }).map(function(t){ return renderRow('homework', t.name, t.form, eff); }).join('');
+        }
+      });
+    } else if(cards[0]){
+      cards[0]._lessonRowTypes = null;
+      var gEff = getEffectiveRowTypes(null, g);
+      var sc0 = cards[0].querySelector('.study-rows-container');
+      var hc0 = cards[0].querySelector('.homework-rows-container');
+      if(sc0) sc0.innerHTML = gEff.filter(function(t){ return t.section === 'study'; }).map(function(t){ return renderRow('study', t.name, t.form, gEff); }).join('');
+      if(hc0) hc0.innerHTML = gEff.filter(function(t){ return t.section === 'homework'; }).map(function(t){ return renderRow('homework', t.name, t.form, gEff); }).join('');
+    }
+    var scContainer = document.getElementById('studentsContainer');
+    if(scContainer) hydrateIcons(scContainer);
     rebuildAllRowDropdowns();
     renderActiveStaticTexts();
     updateLessonLinkBar();
-    showPreviousLesson(groupId, null);
+    showPreviousLesson(groupId, null, (Array.isArray(targetStudentIds) && targetStudentIds.length) ? targetStudentIds : null);
     saveDraft();
   }, 30);
   if (currentAttachments.length > 0) {
@@ -1283,11 +1579,25 @@ export async function saveSession(btn){
     var gName = normalize(state.group);
     var group = data.groups.find(function(g){ return normalize(g.name) === gName; });
 
+    var ctx = (group && _currentLessonContext && _currentLessonContext.groupId === group.id)
+      ? _currentLessonContext
+      : ((group && state.lessonContext && state.lessonContext.groupId === group.id) ? state.lessonContext : null);
+    var sessTime = ctx ? (ctx.time || '') : '';
+    var sessRuleId = ctx ? (ctx.ruleId || null) : null;
+    var sessExtraId = ctx ? (ctx.extraId || null) : null;
+
     if (group && state.date) {
       var dup = data.sessions.find(function(s){
-        return s.groupId === group.id
-          && s.date === state.date
-          && (s.lessonNumber || '') === (state.lesson || '');
+        if (s.groupId !== group.id || s.date !== state.date) return false;
+        if (sessTime) {
+          if (s.time) return s.time === sessTime;
+          if ((s.lessonNumber || '') !== (state.lesson || '')) return false;
+          if (ctx && Array.isArray(ctx.studentIds) && ctx.studentIds.length && Array.isArray(s.studentIds) && s.studentIds.length) {
+            return s.studentIds.some(function(sid){ return ctx.studentIds.indexOf(sid) !== -1; });
+          }
+          return true;
+        }
+        return !s.time && (s.lessonNumber || '') === (state.lesson || '');
       });
       if (dup) {
         var replace = confirm(
@@ -1323,8 +1633,10 @@ export async function saveSession(btn){
       if(!nm) return;
       var student = data.students.find(function(x){ return x.groupId === group.id && normalize(x.name) === nm; });
       if(!student){
-        student = {id: genId(), name: st.name.trim(), groupId: group.id, constants: [], notes:'', phone:'', country:'', timezone:'', guardianName:'', birthDate:'', currentLevel:''};
+        student = {id: genId(), name: st.name.trim(), groupId: group.id, constants: [], notes:'', phone:'', country:'', timezone:'', guardianName:'', birthDate:'', currentLevel:'', telegram:'', gender: st.gender || 'male'};
         data.students.push(student);
+      } else {
+        if (st.gender) student.gender = st.gender;
       }
       if(!student.constants) student.constants = [];
       if (st.attendance === 'present' && st.level) student.currentLevel = st.level;
@@ -1334,7 +1646,8 @@ export async function saveSession(btn){
     var report = document.getElementById('output').value || generateReportText();
     data.sessions.push({
       id: genId(), groupId: group.id, studentIds: ids,
-      date: state.date || '', lessonNumber: state.lesson || '', duration: state.duration || '',
+      date: state.date || '', time: sessTime, ruleId: sessRuleId, extraId: sessExtraId,
+      lessonNumber: state.lesson || '', duration: state.duration || '',
       subject: state.subject, subjects: state.subjects,
       attachmentIds: currentAttachments.map(function(a){ return a.id; }),
       data: state, report: report, savedAt: new Date().toISOString()
@@ -1381,6 +1694,63 @@ export function shareReportWhatsApp(){
   openGenericModal('إرسال واتساب', body, '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button>');
 }
 
+export function shareReportTelegram(){
+  var out = document.getElementById('output');
+  var txt = (out && out.value) ? out.value : document.getElementById('sheetOutput').value;
+  if(!txt || !txt.trim()){ showNotify('أنشئ التقرير أولاً'); return; }
+  var grpName = normalize(document.getElementById('groupName').value);
+  var grp = data.groups.find(function(g){ return normalize(g.name) === grpName; });
+  var studentsWithPhone = [];
+  document.querySelectorAll('.student-card').forEach(function(card){
+    var sName = (card.querySelector('.student-name').value || '').trim();
+    var att = card.querySelector('.student-attendance').value;
+    if (!sName || att !== 'present') return;
+    var s = grp ? data.students.find(function(x){ return x.groupId === grp.id && normalize(x.name) === normalize(sName); }) : null;
+    var contactInfo = s ? (s.telegram || s.phone) : '';
+    if (s && contactInfo && contactInfo.trim()) studentsWithPhone.push({ name: s.name, phone: contactInfo.trim() });
+  });
+  if (studentsWithPhone.length === 0){ doShareTelegram(txt, null); return; }
+  if (studentsWithPhone.length === 1){ doShareTelegram(txt, studentsWithPhone[0].phone); return; }
+  var body = '<p style="margin-bottom:12px;font-weight:700">إرسال التقرير إلى:</p>';
+  body += '<button class="btn btn-secondary" style="width:100%;margin-bottom:6px;justify-content:flex-start;text-align:right;padding:12px" onclick="doShareCurrentReportTelegram(null)"><span data-icon="globe" data-icon-size="14"></span><span style="margin-right:6px">عام (اختر المحادثة)</span></button>';
+  studentsWithPhone.forEach(function(s){
+    body += '<button class="btn btn-secondary" style="width:100%;margin-bottom:6px;justify-content:flex-start;text-align:right;padding:12px" onclick="doShareCurrentReportTelegram(\'' + escapeAttr(s.phone) + '\')"><div><div style="font-weight:700;display:flex;align-items:center;gap:6px">' + svgIcon('send', 14) + escapeHtml(s.name) + '</div><div style="font-size:.8rem;color:var(--text-muted)">' + escapeHtml(s.phone) + '</div></div></button>';
+  });
+  openGenericModal('إرسال تيليجرام', body, '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button>');
+}
+
+export function doShareCurrentReportTelegram(phone){
+  closeGenericModal();
+  var out = document.getElementById('output');
+  var txt = (out && out.value) ? out.value : document.getElementById('sheetOutput').value;
+  doShareTelegram(txt, phone);
+}
+
+export function doShareTelegram(text, phone){
+  if (!text || !text.trim()){ showNotify('لا يوجد تقرير'); return; }
+  var encodedText = encodeURIComponent(text);
+  
+  if (phone && phone.trim()) {
+    var contact = phone.trim();
+    // رابط عميق لفتح محادثة المستخدم مباشرة
+    var url = 'tg://resolve?';
+    if (contact.startsWith('@')) {
+      url += 'domain=' + contact.substring(1);
+    } else {
+      url += 'phone=' + contact.replace(/[^0-9]/g, '');
+    }
+    
+    // بسبب قيود تيليجرام الأمنية، لا يمكن تمرير النص في رابط المحادثة المباشرة
+    // لذلك ننسخ النص ليقوم المستخدم بلصقه (هذا أفضل حل ممكن تقنياً)
+    if(navigator.clipboard) navigator.clipboard.writeText(text);
+    window.location.href = url;
+    showNotify('تم فتح المحادثة ونسخ التقرير — الصقه في المحادثة');
+  } else {
+    // رابط عميق لفتح تيليجرام ومشاركة النص مع أي شخص (اختيار المحادثة)
+    window.location.href = 'tg://msg_url?text=' + encodedText;
+  }
+}
+
 export function doShareCurrentReport(phone){
   closeGenericModal();
   var out = document.getElementById('output');
@@ -1390,18 +1760,16 @@ export function doShareCurrentReport(phone){
 
 export function doShare(text, phone){
   if (!text || !text.trim()){ showNotify('لا يوجد تقرير'); return; }
-  if (phone) {
-    var url = 'https://wa.me/' + phone.replace(/[^0-9]/g, '') + '?text=' + encodeURIComponent(text);
-    window.open(url, '_blank');
-    return;
-  }
-  if (navigator.share) {
-    navigator.share({ title: 'تقرير الحصة', text: text }).catch(function(err){
-      if (err && err.name !== 'AbortError') window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
-    });
-  } else {
-    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
-  }
+  var cleanPhone = phone ? phone.replace(/[^0-9]/g, '') : '';
+  var encodedText = encodeURIComponent(text);
+  
+  // رابط عميق لفتح تطبيق واتساب مباشرة دون المرور بالمتصفح
+  var url = cleanPhone 
+    ? 'whatsapp://send?phone=' + cleanPhone + '&text=' + encodedText 
+    : 'whatsapp://send?text=' + encodedText;
+    
+  // التوجيه المباشر لنظام الهاتف لفتح التطبيق
+  window.location.href = url;
 }
 
 export function copyReport(){
@@ -1428,6 +1796,200 @@ export function fallbackCopy(text){
   document.body.removeChild(ta);
 }
 
+export function generateReminderText(dateISO, groupId, time){
+  var g = data.groups.find(function(x){ return x.id === groupId; });
+  var d = new Date(dateISO + 'T00:00:00');
+  var dayNames = window.DAY_NAMES || ['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+  var dayName = !isNaN(d.getTime()) ? dayNames[d.getDay()] : '';
+  var tTZ = getTeacherTimezone();
+  var sTZ = (g && g.timezone) ? g.timezone : tTZ;
+  var groupTime = convertTimeBetweenTimezones(dateISO, time, tTZ, sTZ);
+  var groupClean = g ? cleanGroupName(g.name) : '';
+
+  return '🔔🔔\n'
+    + 'السلام عليكم ورحمة الله وبركاته\n'
+    + 'تذكير بموعدنا ' + dayName + ' إن شاء الله الساعة ' + groupTime + '\n'
+    + 'بتوقيتكم\n\n'
+    + 'اسم الجروب/ ' + groupClean;
+}
+
+export async function generateReminderTextAsync(dateISO, groupId, time, lang){
+  if (lang !== 'en') return generateReminderText(dateISO, groupId, time);
+  var g = data.groups.find(function(x){ return x.id === groupId; });
+  var d = new Date(dateISO + 'T00:00:00');
+  var daysEn = (REPORT_I18N && REPORT_I18N.en && REPORT_I18N.en.days) || ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var dayNameEn = !isNaN(d.getTime()) ? daysEn[d.getDay()] : '';
+  var tTZ = getTeacherTimezone();
+  var sTZ = (g && g.timezone) ? g.timezone : tTZ;
+  var groupTime = convertTimeBetweenTimezones(dateISO, time, tTZ, sTZ);
+  var groupClean = g ? cleanGroupName(g.name) : '';
+  var translatedGroup = groupClean;
+  if (groupClean) {
+    var trRes = await translateTextsOnline([groupClean], 'en');
+    if (trRes && trRes.map && trRes.map[groupClean]) {
+      translatedGroup = trRes.map[groupClean];
+    }
+  }
+  return '🔔🔔\n'
+    + 'Assalamu Alaikum wa Rahmatullahi wa Barakatuh\n'
+    + 'Reminder of our session on ' + dayNameEn + ', Insha\'Allah, at ' + groupTime + ' (your local time)\n\n'
+    + 'Group: ' + translatedGroup;
+}
+
+export async function switchReminderLang(lang){
+  lang = (lang === 'en') ? 'en' : 'ar';
+  var btnAr = document.getElementById('remLangBtn-ar');
+  var btnEn = document.getElementById('remLangBtn-en');
+  if (btnAr) btnAr.classList.toggle('active', lang === 'ar');
+  if (btnEn) btnEn.classList.toggle('active', lang === 'en');
+  var p = window._currentReminderParams;
+  if (!p) return;
+  var ta = document.getElementById('reminderMessageText');
+  if (ta) ta.dir = (lang === 'en') ? 'ltr' : 'rtl';
+  var txt = await generateReminderTextAsync(p.dateISO, p.groupId, p.time, lang);
+  if (ta) ta.value = txt;
+}
+
+export function openReminderModal(dateISO, groupId, time){
+  var g = data.groups.find(function(x){ return x.id === groupId; });
+  if (!g) { showNotify('المجموعة غير موجودة'); return; }
+  window._currentReminderParams = { dateISO: dateISO, groupId: groupId, time: time };
+  var occs = getOccurrencesForDate(new Date(dateISO + 'T00:00:00'));
+  var occ = occs.find(function(o){ return o.groupId === groupId && o.time === time; });
+  window._currentReminderTargetStudentIds = (occ && Array.isArray(occ.studentIds) && occ.studentIds.length)
+    ? occ.studentIds.slice()
+    : null;
+  var tTZ = getTeacherTimezone();
+  var sTZ = g.timezone ? g.timezone : tTZ;
+  var groupTime = convertTimeBetweenTimezones(dateISO, time, tTZ, sTZ);
+  var msg = generateReminderText(dateISO, groupId, time);
+
+  var tzNotice = '';
+  if (!g.timezone) {
+    tzNotice = '<div style="background:var(--warning-bg);color:var(--warning);padding:8px 12px;border-radius:8px;font-size:.78rem;margin-bottom:10px;display:flex;align-items:center;gap:6px">'
+      + svgIcon('alert-triangle', 14)
+      + '<span>لم يُحدد توقيت خاص لهذه المجموعة — الوقت المعروض بتوقيتك (' + escapeHtml(time) + ')</span></div>';
+  } else if (g.timezone !== tTZ) {
+    tzNotice = '<div style="background:var(--info-bg);color:var(--accent-blue);padding:8px 12px;border-radius:8px;font-size:.78rem;margin-bottom:10px;display:flex;align-items:center;gap:6px">'
+      + svgIcon('globe', 14)
+      + '<span>وقتك: ' + escapeHtml(time) + ' ← توقيتهم: ' + escapeHtml(groupTime) + ' (' + escapeHtml(g.timezone) + ')</span></div>';
+  } else {
+    tzNotice = '<div style="background:var(--card-secondary-bg);color:var(--text-muted);padding:8px 12px;border-radius:8px;font-size:.78rem;margin-bottom:10px;display:flex;align-items:center;gap:6px">'
+      + svgIcon('clock', 14)
+      + '<span>التوقيت مطابق لتوقيتك (' + escapeHtml(groupTime) + ')</span></div>';
+  }
+
+  var langTabs = '<div class="lib-subtabs" style="margin-bottom:10px">'
+    + '<button type="button" class="lib-subtab active" id="remLangBtn-ar" onclick="switchReminderLang(\'ar\')">عربي</button>'
+    + '<button type="button" class="lib-subtab" id="remLangBtn-en" onclick="switchReminderLang(\'en\')">English</button>'
+    + '</div>';
+
+  var body = tzNotice
+    + langTabs
+    + '<textarea id="reminderMessageText" dir="rtl" style="min-height:170px;height:185px;resize:vertical;font-family:\'IBM Plex Sans Arabic\',monospace;line-height:1.7;font-size:.9rem">' + escapeHtml(msg) + '</textarea>'
+    + '<p style="font-size:.72rem;color:var(--text-muted);margin:6px 0 0">يمكنك تعديل النص قبل النسخ أو الإرسال</p>';
+
+  var footer = '<button type="button" class="btn btn-secondary" onclick="closeGenericModal()">إغلاق</button>'
+    + '<button type="button" class="btn btn-copy" onclick="copyReminderText()">' + svgIcon('copy', 14) + ' نسخ</button>'
+    + '<button type="button" class="btn btn-primary" style="width:auto;margin:0" onclick="shareReminderWhatsApp(\'' + escapeAttr(groupId) + '\')">' + svgIcon('smartphone', 14) + ' واتساب</button>'
+    + '<button type="button" class="btn btn-secondary" onclick="shareReminderTelegram(\'' + escapeAttr(groupId) + '\')">' + svgIcon('send', 14) + ' تيليجرام</button>';
+
+  openGenericModal(svgIcon('bell', 18) + ' إرسال تذكير', body, footer);
+}
+
+export function copyReminderText(){
+  var el = document.getElementById('reminderMessageText');
+  var txt = el ? el.value : '';
+  if (!txt.trim()) { showNotify('النص فارغ'); return; }
+  copyText(txt);
+}
+
+export function shareReminderWhatsApp(groupId){
+  var el = document.getElementById('reminderMessageText');
+  var txt = el ? el.value : '';
+  if (!txt.trim()) { showNotify('النص فارغ'); return; }
+
+  var targetIds = (Array.isArray(window._currentReminderTargetStudentIds) && window._currentReminderTargetStudentIds.length)
+    ? window._currentReminderTargetStudentIds
+    : null;
+  var studentsWithPhone = data.students.filter(function(s){
+    if (s.groupId !== groupId || !s.phone || !s.phone.trim()) return false;
+    if (targetIds && targetIds.indexOf(s.id) === -1) return false;
+    return true;
+  });
+
+  if (studentsWithPhone.length === 0) {
+    doShare(txt, null);
+    return;
+  }
+  if (studentsWithPhone.length === 1) {
+    doShare(txt, studentsWithPhone[0].phone.trim());
+    return;
+  }
+
+  window._pendingReminderText = txt;
+  var body = '<p style="margin-bottom:12px;font-weight:700">إرسال التذكير إلى:</p>';
+  body += '<button type="button" class="btn btn-secondary" style="width:100%;margin-bottom:6px;justify-content:flex-start;text-align:right;padding:12px" onclick="doSharePendingReminderWhatsApp(\'\')">' + svgIcon('globe', 14) + '<span style="margin-right:6px">عام (اختر المحادثة)</span></button>';
+  studentsWithPhone.forEach(function(s){
+    var cleanPhone = s.phone.trim().replace(/[^0-9]/g, '');
+    body += '<button type="button" class="btn btn-secondary" style="width:100%;margin-bottom:6px;justify-content:flex-start;text-align:right;padding:12px" data-phone="' + escapeAttr(cleanPhone) + '" onclick="doSharePendingReminderWhatsApp(this.dataset.phone)">'
+      + '<div><div style="font-weight:700;display:flex;align-items:center;gap:6px">' + svgIcon('smartphone', 14) + escapeHtml(s.name) + '</div>'
+      + '<div style="font-size:.8rem;color:var(--text-muted)">' + escapeHtml(s.phone.trim()) + '</div></div></button>';
+  });
+  openGenericModal('إرسال تذكير واتساب', body, '<button type="button" class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button>');
+}
+
+export function doSharePendingReminderWhatsApp(phone){
+  var txt = window._pendingReminderText || '';
+  window._pendingReminderText = '';
+  closeGenericModal();
+  doShare(txt, phone || null);
+}
+
+export function shareReminderTelegram(groupId){
+  var el = document.getElementById('reminderMessageText');
+  var txt = el ? el.value : '';
+  if (!txt.trim()) { showNotify('النص فارغ'); return; }
+
+  var targetIds = (Array.isArray(window._currentReminderTargetStudentIds) && window._currentReminderTargetStudentIds.length)
+    ? window._currentReminderTargetStudentIds
+    : null;
+  var studentsWithTg = data.students.filter(function(s){
+    var contact = (s.telegram || s.phone || '').trim();
+    if (s.groupId !== groupId || !contact) return false;
+    if (targetIds && targetIds.indexOf(s.id) === -1) return false;
+    return true;
+  }).map(function(s){
+    return { name: s.name, contact: (s.telegram || s.phone || '').trim() };
+  });
+
+  if (studentsWithTg.length === 0) {
+    doShareTelegram(txt, null);
+    return;
+  }
+  if (studentsWithTg.length === 1) {
+    doShareTelegram(txt, studentsWithTg[0].contact);
+    return;
+  }
+
+  window._pendingReminderText = txt;
+  var body = '<p style="margin-bottom:12px;font-weight:700">إرسال التذكير إلى:</p>';
+  body += '<button type="button" class="btn btn-secondary" style="width:100%;margin-bottom:6px;justify-content:flex-start;text-align:right;padding:12px" onclick="doSharePendingReminderTelegram(\'\')">' + svgIcon('globe', 14) + '<span style="margin-right:6px">عام (اختر المحادثة)</span></button>';
+  studentsWithTg.forEach(function(s){
+    body += '<button type="button" class="btn btn-secondary" style="width:100%;margin-bottom:6px;justify-content:flex-start;text-align:right;padding:12px" data-contact="' + escapeAttr(s.contact) + '" onclick="doSharePendingReminderTelegram(this.dataset.contact)">'
+      + '<div><div style="font-weight:700;display:flex;align-items:center;gap:6px">' + svgIcon('send', 14) + escapeHtml(s.name) + '</div>'
+      + '<div style="font-size:.8rem;color:var(--text-muted)">' + escapeHtml(s.contact) + '</div></div></button>';
+  });
+  openGenericModal('إرسال تذكير تيليجرام', body, '<button type="button" class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button>');
+}
+
+export function doSharePendingReminderTelegram(contact){
+  var txt = window._pendingReminderText || '';
+  window._pendingReminderText = '';
+  closeGenericModal();
+  doShareTelegram(txt, contact || null);
+}
+
 /* ═══════════════ HOME ═══════════════ */
 export function renderHome(){
   var now = new Date();
@@ -1446,11 +2008,15 @@ export function renderHome(){
     var todayOccs = getOccurrencesForDate(now);
     var activeOcc = null;
     var nowMin = now.getHours() * 60 + now.getMinutes();
+    var nowBefore = parseInt(data.settings.nowCardBeforeMin, 10);
+    if (isNaN(nowBefore) || nowBefore < 0) nowBefore = 30;
+    var nowAfter = parseInt(data.settings.nowCardAfterMin, 10);
+    if (isNaN(nowAfter) || nowAfter < 5) nowAfter = 60;
     todayOccs.forEach(function(occ){
       if (occ.status === 'cancelled' || occ.status === 'completed') return;
       var p = occ.time.split(':').map(Number);
       var startMin = p[0]*60 + p[1];
-      if (startMin - 30 <= nowMin && nowMin <= startMin + 60) {
+      if (startMin - nowBefore <= nowMin && nowMin <= startMin + nowAfter) {
         if (!activeOcc || Math.abs(startMin - nowMin) < Math.abs(activeOcc.startMin - nowMin)) {
           activeOcc = { occ: occ, startMin: startMin };
         }
@@ -1467,7 +2033,7 @@ export function renderHome(){
       nowCard.innerHTML = '<div class="now-card">'
         + '<div class="now-badge">' + svgIcon('clock', 12) + ' الآن</div>'
         + '<div class="now-title">' + escapeHtml(activeOcc.occ.groupName) + '</div>'
-        + '<div class="now-time">' + svgIcon('clock', 12) + ' ' + escapeHtml(activeOcc.occ.time) + ' — ' + escapeHtml(timeText) + '</div>'
+        + '<div class="now-time">' + svgIcon('clock', 12) + ' ' + escapeHtml(formatTimeDisplay(activeOcc.occ.time)) + ' — ' + escapeHtml(timeText) + '</div>'
         + '<div class="now-actions">'
         + '<button class="btn btn-white" onclick="enterLessonAndOpenLink(\'' + activeOcc.occ.groupId + '\',\'' + activeOcc.occ.dateISO + '\',\'' + activeOcc.occ.time + '\')">' + svgIcon('play', 14) + ' دخول الحصة</button>'
         + '<button class="btn btn-ghost-white" onclick="showOccurrenceDetails(\'' + activeOcc.occ.dateISO + '\',\'' + activeOcc.occ.groupId + '\',\'' + activeOcc.occ.time + '\')">' + svgIcon('more-horizontal', 14) + '</button>'
@@ -1510,7 +2076,7 @@ export function renderHome(){
       var subjLabel = (g && g.subject) ? g.subject : 'القرآن';
       var meta = statusMeta[occ.status] || statusMeta.upcoming;
       todayHtml += '<div class="lesson-item" onclick="showOccurrenceDetails(\'' + occ.dateISO + '\',\'' + occ.groupId + '\',\'' + occ.time + '\')">'
-        + '<div class="lesson-time">' + escapeHtml(occ.time) + '</div>'
+        + '<div class="lesson-time">' + escapeHtml(formatTimeDisplay(occ.time)) + '</div>'
         + '<div class="lesson-body"><div class="lesson-name">' + escapeHtml(occ.groupName) + '</div><div class="lesson-meta">' + escapeHtml(subjLabel) + '</div></div>'
         + '<span class="lesson-status ' + meta.cls + '">' + svgIcon(meta.icon, 12) + ' ' + meta.label + '</span>'
         + '</div>';
@@ -1570,7 +2136,7 @@ export function renderHome(){
       var subjLabel = (g && g.subject) ? g.subject : 'القرآن';
       var meta = statusMeta2[occ.status] || statusMeta2.upcoming;
       tomorrowHtml += '<div class="lesson-item" onclick="showOccurrenceDetails(\'' + occ.dateISO + '\',\'' + occ.groupId + '\',\'' + occ.time + '\')">'
-        + '<div class="lesson-time">' + escapeHtml(occ.time) + '</div>'
+        + '<div class="lesson-time">' + escapeHtml(formatTimeDisplay(occ.time)) + '</div>'
         + '<div class="lesson-body"><div class="lesson-name">' + escapeHtml(occ.groupName) + '</div><div class="lesson-meta">' + escapeHtml(subjLabel) + '</div></div>'
         + '<span class="lesson-status ' + meta.cls + '">' + svgIcon(meta.icon, 12) + ' ' + meta.label + '</span>'
         + '</div>';
@@ -1583,8 +2149,8 @@ export function renderHome(){
 }
 
 /* ═══════════════ LIBRARY — GROUPS ═══════════════ */
-export function backToGroups(){ currentViewGroupId = null; currentViewStudentId = null; studentBackTarget = null; var gl = document.getElementById('groupsList'); if(gl) gl.style.display = ''; var gd = document.getElementById('groupDetail'); if(gd) gd.style.display = 'none'; }
-export function backToStudents(){ currentViewStudentId = null; studentBackTarget = null; var sl = document.getElementById('studentsList'); if(sl) sl.style.display = ''; var sd = document.getElementById('studentDetail'); if(sd) sd.style.display = 'none'; }
+export function backToGroups(){ currentGroupSubPage = null; currentViewGroupId = null; currentViewStudentId = null; studentBackTarget = null; window.currentViewGroupId = null; window.currentViewStudentId = null; window.studentBackTarget = null; var gl = document.getElementById('groupsList'); if(gl) gl.style.display = ''; var gd = document.getElementById('groupDetail'); if(gd) gd.style.display = 'none'; }
+export function backToStudents(){ currentStudentSubPage = null; currentViewStudentId = null; studentBackTarget = null; window.currentViewStudentId = null; window.studentBackTarget = null; var sl = document.getElementById('studentsList'); if(sl) sl.style.display = ''; var sd = document.getElementById('studentDetail'); if(sd) sd.style.display = 'none'; }
 export function backFromStudentDetail(){ if(studentBackTarget){ var gid = studentBackTarget; studentBackTarget = null; switchLibSub('groups'); openGroupDetail(gid); } else backToStudents(); }
 
 export function renderGroupsList(){
@@ -1630,29 +2196,114 @@ export function createGroup(){
 
 export function openGroupDetail(id){
   var g = data.groups.find(function(x){ return x.id === id; }); if(!g) return;
+  var isSameGroup = (id === currentViewGroupId);
+  if (!isSameGroup) {
+    if (!currentViewGroupId) pushAppNavState('group-' + id);
+    currentGroupSubPage = null;
+  }
   currentViewGroupId = id; currentViewStudentId = null;
   window.currentViewGroupId = id; window.currentViewStudentId = null;
+
   var students = data.students.filter(function(s){ return s.groupId === g.id; });
   var sessions = data.sessions.filter(function(s){ return s.groupId === g.id; }).sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+  var schedCount = (g.schedule || []).length;
+  var excCount = (data.appointments || []).filter(function(a){ return a.groupId === g.id; }).length;
+  var monthlyCount = data.monthlyReports.filter(function(r){ return r.ownerType === 'group' && r.ownerId === g.id; }).length;
+
   var detail = document.getElementById('groupDetail');
   document.getElementById('groupsList').style.display = 'none';
   detail.style.display = 'block';
-  var chips = students.length ? students.map(function(s){ return '<span class="student-chip" onclick="openStudentDetail(\''+s.id+'\',\''+g.id+'\')">' + svgIcon('user', 12) + ' ' + escapeHtml(s.name) + '</span>'; }).join('') : '<div style="color:var(--text-muted);font-size:.9rem">لا يوجد طلاب بعد</div>';
-  var tree = buildSessionsTree(sessions);
   var linkMeta = g.link ? '<span>' + svgIcon('link', 12) + ' <a href="'+escapeAttr(normalizeUrl(g.link))+'" target="_blank" rel="noopener">دخول</a></span>' : '';
   var locMeta = g.location ? '<span>' + svgIcon('building-2', 12) + ' ' + escapeHtml(g.location) + '</span>' : '';
-  detail.innerHTML = '<div class="detail-header"><button class="btn btn-secondary btn-sm" onclick="backToGroups()">' + svgIcon('arrow-right', 14) + ' رجوع</button><h2>' + svgIcon('folder-open', 20) + ' ' + escapeHtml(g.name) + '</h2><div class="btn-row"><button class="btn btn-secondary btn-sm" onclick="editGroup(\''+g.id+'\')">' + svgIcon('edit-3', 12) + ' تعديل</button><button class="btn btn-danger btn-sm" onclick="deleteGroup(\''+g.id+'\')">' + svgIcon('trash-2', 12) + '</button></div></div>'
-    + '<div class="detail-meta"><span>' + svgIcon('user', 12) + ' ' + students.length + ' طالب</span><span>' + svgIcon('calendar', 12) + ' ' + sessions.length + ' حصة</span>' + (g.teacherName ? '<span>' + svgIcon('graduation-cap', 12) + ' ' + escapeHtml(g.teacherName) + '</span>' : '') + locMeta + linkMeta + '</div>'
-    + '<div style="margin-bottom:20px"><button class="btn btn-primary" style="width:auto;margin:0" onclick="newSessionForGroup(\''+g.id+'\')">' + svgIcon('plus', 14) + ' حصة جديدة</button></div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('users', 14) + ' الطلاب (' + students.length + ')</span></h3><div>' + chips + '</div><button class="btn btn-secondary btn-sm" style="margin-top:14px" onclick="addStudentToGroup(\''+g.id+'\')">' + svgIcon('plus', 12) + ' إضافة طالب</button></div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('pin', 14) + ' الثوابت</span></h3><div id="groupConstantsContainer">' + renderConstants('group', g.id) + '</div><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="addConstant(\'group\', \''+g.id+'\')">' + svgIcon('plus', 12) + ' إضافة ثابت</button></div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('alarm-clock', 14) + ' المواعيد المتكررة</span><button class="btn btn-primary btn-sm" onclick="addSchedulePrompt(\''+g.id+'\')">' + svgIcon('plus', 12) + ' موعد</button></h3><div id="groupScheduleContainer">' + renderSchedule(g.id) + '</div><button class="btn btn-secondary btn-sm" style="margin-top:12px;width:100%" onclick="addExtraAppointmentPrompt(\''+g.id+'\')">' + svgIcon('plus', 12) + ' حصة استثنائية</button></div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('pin', 14) + ' الاستثناءات</span></h3><div id="groupExceptionsContainer">' + renderGroupExceptions(g.id) + '</div></div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('settings', 14) + ' أنواع سطور</span><button class="btn btn-primary btn-sm" onclick="openCustomRowTypeEditor(\'group\', \''+g.id+'\', null)">' + svgIcon('plus', 12) + ' نوع</button></h3><div id="groupCustomRowTypesContainer">' + renderCustomRowTypes(g.id) + '</div></div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('pin', 14) + ' نصوص ثابتة</span><button class="btn btn-primary btn-sm" onclick="openStaticTextEditor(\'group\', \''+g.id+'\', null)">' + svgIcon('plus', 12) + ' نص</button></h3><div id="groupStaticTextsContainer">' + renderStaticTexts('group', g.id) + '</div></div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('calendar', 14) + ' الحصص (' + sessions.length + ')</span><button class="btn btn-secondary btn-sm" onclick="toggleSessionSort()">' + (sessionSortOrder==='desc'? svgIcon('chevron-down', 12) + ' الأحدث' : svgIcon('chevron-down', 12) + ' الأقدم') + '</button></h3>' + tree + '</div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('file-text', 14) + ' التقارير الشهرية</span><button class="btn btn-primary btn-sm" onclick="openNewMonthlyReport(\'group\', \''+g.id+'\')">' + svgIcon('plus', 12) + ' تقرير</button></h3>' + buildMonthlyReportsTree('group', g.id) + '</div>';
+
+  if (currentGroupSubPage === null) {
+    var schedBadge = schedCount + ' موعد' + (excCount ? ' · ' + excCount + ' استثناء' : '');
+    detail.innerHTML = '<div class="page-slide-in">'
+      + '<div class="detail-header"><button class="btn btn-secondary btn-sm" onclick="backToGroups()">' + svgIcon('arrow-right', 14) + ' رجوع</button><h2>' + svgIcon('folder-open', 20) + ' ' + escapeHtml(g.name) + '</h2><div class="btn-row"><button class="btn btn-secondary btn-sm" onclick="editGroup(\''+g.id+'\')">' + svgIcon('edit-3', 12) + ' تعديل</button><button class="btn btn-danger btn-sm" onclick="deleteGroup(\''+g.id+'\')">' + svgIcon('trash-2', 12) + '</button></div></div>'
+      + '<div class="detail-meta"><span>' + svgIcon('user', 12) + ' ' + students.length + ' طالب</span><span>' + svgIcon('calendar', 12) + ' ' + sessions.length + ' حصة</span>' + (g.teacherName ? '<span>' + svgIcon('graduation-cap', 12) + ' ' + escapeHtml(g.teacherName) + '</span>' : '') + locMeta + linkMeta + '</div>'
+      + '<div style="margin-bottom:20px"><button class="btn btn-primary" style="width:auto;margin:0" onclick="newSessionForGroup(\''+g.id+'\')">' + svgIcon('plus', 14) + ' حصة جديدة</button></div>'
+      + '<div class="nav-menu-list">'
+      + '<button type="button" class="nav-menu-item" onclick="openGroupSubPage(\'students\')">'
+      + '<span class="nav-menu-icon">' + svgIcon('users', 18) + '</span>'
+      + '<div class="nav-menu-body"><div class="nav-menu-title">الطلاب</div><div class="nav-menu-sub">عرض طلاب المجموعة أو إضافة طالب</div></div>'
+      + '<span class="nav-menu-badge">' + students.length + ' طالب</span>'
+      + '<span class="nav-menu-arrow">' + svgIcon('chevron-left', 16) + '</span>'
+      + '</button>'
+      + '<button type="button" class="nav-menu-item" onclick="openGroupSubPage(\'schedule\')">'
+      + '<span class="nav-menu-icon info">' + svgIcon('alarm-clock', 18) + '</span>'
+      + '<div class="nav-menu-body"><div class="nav-menu-title">المواعيد والاستثناءات</div><div class="nav-menu-sub">المواعيد المتكررة والحصص الاستثنائية</div></div>'
+      + '<span class="nav-menu-badge">' + escapeHtml(schedBadge) + '</span>'
+      + '<span class="nav-menu-arrow">' + svgIcon('chevron-left', 16) + '</span>'
+      + '</button>'
+      + '<button type="button" class="nav-menu-item" onclick="openGroupSubPage(\'sessions\')">'
+      + '<span class="nav-menu-icon green">' + svgIcon('calendar', 18) + '</span>'
+      + '<div class="nav-menu-body"><div class="nav-menu-title">سجل الحصص</div><div class="nav-menu-sub">تصفح تقارير الحصص المحفوظة</div></div>'
+      + '<span class="nav-menu-badge">' + sessions.length + ' حصة</span>'
+      + '<span class="nav-menu-arrow">' + svgIcon('chevron-left', 16) + '</span>'
+      + '</button>'
+      + '<button type="button" class="nav-menu-item" onclick="openGroupSubPage(\'monthly\')">'
+      + '<span class="nav-menu-icon amber">' + svgIcon('file-text', 18) + '</span>'
+      + '<div class="nav-menu-body"><div class="nav-menu-title">التقارير الشهرية</div><div class="nav-menu-sub">عرض وتوليد تقارير نهاية الشهر</div></div>'
+      + '<span class="nav-menu-badge">' + monthlyCount + ' تقرير</span>'
+      + '<span class="nav-menu-arrow">' + svgIcon('chevron-left', 16) + '</span>'
+      + '</button>'
+      + '<button type="button" class="nav-menu-item" onclick="openGroupSubPage(\'custom\')">'
+      + '<span class="nav-menu-icon">' + svgIcon('settings', 18) + '</span>'
+      + '<div class="nav-menu-body"><div class="nav-menu-title">التخصيص والثوابت</div><div class="nav-menu-sub">الثوابت، أنواع السطور، النصوص الثابتة</div></div>'
+      + '<span class="nav-menu-arrow">' + svgIcon('chevron-left', 16) + '</span>'
+      + '</button>'
+      + '</div></div>';
+  } else {
+    var subTitles = {
+      students: 'الطلاب (' + students.length + ')',
+      schedule: 'المواعيد والاستثناءات',
+      sessions: 'سجل الحصص (' + sessions.length + ')',
+      monthly: 'التقارير الشهرية (' + monthlyCount + ')',
+      custom: 'التخصيص والثوابت'
+    };
+    var bodySection = '';
+    if (currentGroupSubPage === 'students') {
+      var chips = students.length ? students.map(function(s){ return '<span class="student-chip" onclick="openStudentDetail(\''+s.id+'\',\''+g.id+'\')">' + svgIcon('user', 12) + ' ' + escapeHtml(s.name) + '</span>'; }).join('') : '<div style="color:var(--text-muted);font-size:.9rem">لا يوجد طلاب بعد</div>';
+      bodySection = '<div class="detail-section"><h3><span>' + svgIcon('users', 14) + ' الطلاب (' + students.length + ')</span></h3><div>' + chips + '</div><button class="btn btn-secondary btn-sm" style="margin-top:14px" onclick="addStudentToGroup(\''+g.id+'\')">' + svgIcon('plus', 12) + ' إضافة طالب</button></div>';
+    } else if (currentGroupSubPage === 'schedule') {
+      bodySection = '<div class="detail-section"><h3><span>' + svgIcon('alarm-clock', 14) + ' المواعيد المتكررة</span><button class="btn btn-primary btn-sm" onclick="addSchedulePrompt(\''+g.id+'\')">' + svgIcon('plus', 12) + ' موعد</button></h3><div id="groupScheduleContainer">' + renderSchedule(g.id) + '</div><button class="btn btn-secondary btn-sm" style="margin-top:12px;width:100%" onclick="addExtraAppointmentPrompt(\''+g.id+'\')">' + svgIcon('plus', 12) + ' حصة استثنائية</button></div>'
+        + '<div class="detail-section"><h3><span>' + svgIcon('pin', 14) + ' الاستثناءات</span></h3><div id="groupExceptionsContainer">' + renderGroupExceptions(g.id) + '</div></div>';
+    } else if (currentGroupSubPage === 'sessions') {
+      var tree = buildSessionsTree(sessions);
+      bodySection = '<div class="detail-section"><h3><span>' + svgIcon('calendar', 14) + ' الحصص (' + sessions.length + ')</span><button class="btn btn-secondary btn-sm" onclick="toggleSessionSort()">' + (sessionSortOrder==='desc'? svgIcon('chevron-down', 12) + ' الأحدث' : svgIcon('chevron-down', 12) + ' الأقدم') + '</button></h3>' + tree + '</div>';
+    } else if (currentGroupSubPage === 'monthly') {
+      bodySection = '<div class="detail-section"><h3><span>' + svgIcon('file-text', 14) + ' التقارير الشهرية</span><button class="btn btn-primary btn-sm" onclick="openNewMonthlyReport(\'group\', \''+g.id+'\')">' + svgIcon('plus', 12) + ' تقرير</button></h3>' + buildMonthlyReportsTree('group', g.id) + '</div>';
+    } else if (currentGroupSubPage === 'custom') {
+      bodySection = '<div class="detail-section"><h3><span>' + svgIcon('pin', 14) + ' الثوابت</span></h3><div id="groupConstantsContainer">' + renderConstants('group', g.id) + '</div><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="addConstant(\'group\', \''+g.id+'\')">' + svgIcon('plus', 12) + ' إضافة ثابت</button></div>'
+        + '<div class="detail-section"><h3><span>' + svgIcon('list', 14) + ' أنواع السطور</span><button class="btn btn-primary btn-sm" onclick="openRowTypeEditor(\'group\', \''+g.id+'\', null)">' + svgIcon('plus', 12) + ' نوع</button></h3><div id="groupRowTypesContainer">' + renderOwnerRowTypes('group', g.id) + '</div></div>'
+        + '<div class="detail-section"><h3><span>' + svgIcon('pin', 14) + ' نصوص ثابتة</span><button class="btn btn-primary btn-sm" onclick="openStaticTextEditor(\'group\', \''+g.id+'\', null)">' + svgIcon('plus', 12) + ' نص</button></h3><div id="groupStaticTextsContainer">' + renderStaticTexts('group', g.id) + '</div></div>';
+    }
+    detail.innerHTML = '<div class="page-slide-in">'
+      + '<div class="subpage-header">'
+      + '<button type="button" class="btn btn-secondary btn-sm" onclick="backToGroupMain()">' + svgIcon('arrow-right', 14) + ' رجوع للمجموعة</button>'
+      + '<div style="flex:1;min-width:0">'
+      + '<h2>' + escapeHtml(subTitles[currentGroupSubPage] || '') + '</h2>'
+      + '<div style="font-size:.76rem;color:var(--text-muted);margin-top:2px">' + escapeHtml(g.name) + '</div>'
+      + '</div>'
+      + '</div>'
+      + bodySection
+      + '</div>';
+  }
   hydrateIcons(detail);
+}
+
+export function openGroupSubPage(sub){
+  if (!currentViewGroupId) return;
+  if (!currentGroupSubPage) pushAppNavState('group-sub-' + sub);
+  currentGroupSubPage = sub;
+  openGroupDetail(currentViewGroupId);
+  window.scrollTo(0, 0);
+}
+
+export function backToGroupMain(){
+  currentGroupSubPage = null;
+  if (currentViewGroupId) openGroupDetail(currentViewGroupId);
+  window.scrollTo(0, 0);
 }
 
 export function editGroup(id){
@@ -1732,7 +2383,7 @@ export function newSessionForGroup(id){
 }
 
 export function addStudentToGroup(groupId){
-  openGenericModal('طالب جديد', '<div class="form-field"><label>اسم الطالب</label><input type="text" id="newStudentName"></div>', '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button><button class="btn btn-primary" style="width:auto;margin:0" onclick="createStudentInGroup(\''+groupId+'\')">إضافة</button>');
+  openGenericModal('طالب جديد', '<div class="form-field"><label>اسم الطالب</label><input type="text" id="newStudentName"></div><div class="form-field"><label>الجنس</label><select id="newStudentGender"><option value="male">طالب (ذكر)</option><option value="female">طالبة (أنثى)</option></select></div>', '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button><button class="btn btn-primary" style="width:auto;margin:0" onclick="createStudentInGroup(\''+groupId+'\')">إضافة</button>');
   setTimeout(function(){ var i = document.getElementById('newStudentName'); if(i) i.focus(); }, 50);
 }
 
@@ -1740,7 +2391,8 @@ export function createStudentInGroup(groupId){
   var v = document.getElementById('newStudentName').value.trim();
   if(!v){ showNotify('أدخل اسمًا'); return; }
   if(data.students.find(function(s){ return s.groupId === groupId && normalize(s.name) === normalize(v); })){ showNotify('الاسم موجود'); return; }
-  data.students.push({id: genId(), name: v, groupId: groupId, constants: [], notes:'', phone:'', country:'', timezone:'', guardianName:'', birthDate:'', currentLevel:''});
+  var gender = (document.getElementById('newStudentGender')||{}).value || 'male';
+  data.students.push({id: genId(), name: v, groupId: groupId, constants: [], notes:'', phone:'', country:'', timezone:'', guardianName:'', birthDate:'', currentLevel:'', telegram:'', gender: gender});
   saveData(); closeGenericModal(); openGroupDetail(groupId);
   showNotify('تم إضافة الطالب');
 }
@@ -1776,34 +2428,105 @@ export function renderStudentsList(){
 /* ═══════════════ STUDENT DETAIL (FIX 4 APPLIED) ═══════════════ */
 export function openStudentDetail(id, fromGroupId){
   var s = data.students.find(function(x){ return x.id === id; }); if(!s) return;
+  var isSameStudent = (id === currentViewStudentId);
+  if (!isSameStudent) {
+    pushAppNavState('student-' + id);
+    currentStudentSubPage = null;
+  }
   currentViewStudentId = id;
   window.currentViewStudentId = id;
-  if(fromGroupId){ currentViewGroupId = fromGroupId; studentBackTarget = fromGroupId; switchLibSub('students'); }
-  else { currentViewGroupId = null; studentBackTarget = null; }
+  if (typeof fromGroupId !== 'undefined' && fromGroupId !== null && fromGroupId !== '') {
+    currentViewGroupId = fromGroupId;
+    studentBackTarget = fromGroupId;
+    switchLibSub('students');
+  } else if (!isSameStudent) {
+    currentViewGroupId = null;
+    studentBackTarget = null;
+  }
   window.currentViewGroupId = currentViewGroupId;
   window.studentBackTarget = studentBackTarget;
 
   var g = data.groups.find(function(x){ return x.id === s.groupId; });
   var sessions = data.sessions.filter(function(x){ return (x.studentIds||[]).indexOf(id) !== -1; }).sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+  var monthlyCount = data.monthlyReports.filter(function(r){ return r.ownerType === 'student' && r.ownerId === s.id; }).length;
   var detail = document.getElementById('studentDetail');
   document.getElementById('studentsList').style.display = 'none';
   detail.style.display = 'block';
-  var tree = buildSessionsTree(sessions);
-  var phoneDisplay = s.phone ? '<span>' + svgIcon('smartphone', 12) + ' <a href="https://wa.me/'+escapeAttr(s.phone.replace(/[^0-9]/g,''))+'" target="_blank" rel="noopener">'+escapeHtml(s.phone)+'</a></span>' : '';
-  var countryDisplay = s.country ? '<span>' + svgIcon('globe', 12) + ' ' + escapeHtml(s.country)+(s.timezone?' — '+escapeHtml(s.timezone):'')+'</span>' : '';
-  var guardianDisplay = s.guardianName ? '<span>' + svgIcon('user-round', 12) + ' ' + escapeHtml(s.guardianName) + '</span>' : '';
-  var levelDisplay = s.currentLevel ? '<span>' + svgIcon('graduation-cap', 12) + ' ' + escapeHtml(s.currentLevel) + '</span>' : '';
-  var birthDisplay = s.birthDate ? '<span>' + svgIcon('cake', 12) + ' ' + escapeHtml(fmtDate(s.birthDate)) + '</span>' : '';
-  var metaExtra = [guardianDisplay, phoneDisplay, countryDisplay, levelDisplay, birthDisplay].filter(Boolean).join('');
-  
-  // ═══ Fix 4: data-student-id="' + s.id + '" بدلاً من data-student-id="`+s.id+`" ═══
-  detail.innerHTML = '<div class="detail-header"><button class="btn btn-secondary btn-sm" onclick="backFromStudentDetail()">' + svgIcon('arrow-right', 14) + ' رجوع</button><h2>' + svgIcon('user', 20) + ' ' + escapeHtml(s.name) + '</h2><div class="btn-row"><button class="btn btn-secondary btn-sm" onclick="editStudent(\''+s.id+'\')">' + svgIcon('edit-3', 12) + ' تعديل</button><button class="btn btn-danger btn-sm" data-student-id="' + s.id + '" onclick="deleteStudent(this.dataset.studentId)">' + svgIcon('trash-2', 12) + '</button></div></div>'
-    + '<div class="detail-meta"><span>' + svgIcon('folder-open', 12) + ' ' + escapeHtml(g?g.name:'—') + '</span><span>' + svgIcon('calendar', 12) + ' ' + sessions.length + ' حصة</span>' + metaExtra + '</div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('pin', 14) + ' الثوابت</span></h3><div id="studentConstantsContainer">' + renderConstants('student', s.id) + '</div><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="addConstant(\'student\', \''+s.id+'\')">' + svgIcon('plus', 12) + ' إضافة ثابت</button></div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('pin', 14) + ' نصوص ثابتة</span><button class="btn btn-primary btn-sm" onclick="openStaticTextEditor(\'student\', \''+s.id+'\', null)">' + svgIcon('plus', 12) + ' نص</button></h3><div id="studentStaticTextsContainer">' + renderStaticTexts('student', s.id) + '</div></div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('calendar', 14) + ' سجل الحصص (' + sessions.length + ')</span><button class="btn btn-secondary btn-sm" onclick="toggleSessionSort()">' + (sessionSortOrder==='desc'? svgIcon('chevron-down', 12) + ' الأحدث' : svgIcon('chevron-down', 12) + ' الأقدم') + '</button></h3>' + tree + '</div>'
-    + '<div class="detail-section"><h3><span>' + svgIcon('file-text', 14) + ' التقارير الشهرية</span><button class="btn btn-primary btn-sm" onclick="openNewMonthlyReport(\'student\', \''+s.id+'\')">' + svgIcon('plus', 12) + ' تقرير</button></h3>' + buildMonthlyReportsTree('student', s.id) + '</div>';
+
+  if (currentStudentSubPage === null) {
+    var phoneDisplay = s.phone ? '<span>' + svgIcon('smartphone', 12) + ' <a href="https://wa.me/'+escapeAttr(s.phone.replace(/[^0-9]/g,''))+'" target="_blank" rel="noopener">'+escapeHtml(s.phone)+'</a></span>' : '';
+    var countryDisplay = s.country ? '<span>' + svgIcon('globe', 12) + ' ' + escapeHtml(s.country)+(s.timezone?' — '+escapeHtml(s.timezone):'')+'</span>' : '';
+    var guardianDisplay = s.guardianName ? '<span>' + svgIcon('user-round', 12) + ' ' + escapeHtml(s.guardianName) + '</span>' : '';
+    var levelDisplay = s.currentLevel ? '<span>' + svgIcon('graduation-cap', 12) + ' ' + escapeHtml(s.currentLevel) + '</span>' : '';
+    var birthDisplay = s.birthDate ? '<span>' + svgIcon('cake', 12) + ' ' + escapeHtml(fmtDate(s.birthDate)) + '</span>' : '';
+    var genderDisplay = '<span>' + svgIcon('user', 12) + ' ' + (s.gender === 'female' ? 'طالبة' : 'طالب') + '</span>';
+    var metaExtra = [genderDisplay, guardianDisplay, phoneDisplay, countryDisplay, levelDisplay, birthDisplay].filter(Boolean).join('');
+
+    detail.innerHTML = '<div class="page-slide-in">'
+      + '<div class="detail-header"><button class="btn btn-secondary btn-sm" onclick="backFromStudentDetail()">' + svgIcon('arrow-right', 14) + ' رجوع</button><h2>' + svgIcon('user', 20) + ' ' + escapeHtml(s.name) + '</h2><div class="btn-row"><button class="btn btn-secondary btn-sm" onclick="editStudent(\''+s.id+'\')">' + svgIcon('edit-3', 12) + ' تعديل</button><button class="btn btn-danger btn-sm" data-student-id="' + s.id + '" onclick="deleteStudent(this.dataset.studentId)">' + svgIcon('trash-2', 12) + '</button></div></div>'
+      + '<div class="detail-meta"><span>' + svgIcon('folder-open', 12) + ' ' + escapeHtml(g?g.name:'—') + '</span><span>' + svgIcon('calendar', 12) + ' ' + sessions.length + ' حصة</span>' + metaExtra + '</div>'
+      + '<div class="nav-menu-list">'
+      + '<button type="button" class="nav-menu-item" onclick="openStudentSubPage(\'sessions\')">'
+      + '<span class="nav-menu-icon green">' + svgIcon('calendar', 18) + '</span>'
+      + '<div class="nav-menu-body"><div class="nav-menu-title">سجل الحصص</div><div class="nav-menu-sub">تصفح تقارير حصص الطالب</div></div>'
+      + '<span class="nav-menu-badge">' + sessions.length + ' حصة</span>'
+      + '<span class="nav-menu-arrow">' + svgIcon('chevron-left', 16) + '</span>'
+      + '</button>'
+      + '<button type="button" class="nav-menu-item" onclick="openStudentSubPage(\'monthly\')">'
+      + '<span class="nav-menu-icon amber">' + svgIcon('file-text', 18) + '</span>'
+      + '<div class="nav-menu-body"><div class="nav-menu-title">التقارير الشهرية</div><div class="nav-menu-sub">عرض وتوليد التقارير الشهرية للطالب</div></div>'
+      + '<span class="nav-menu-badge">' + monthlyCount + ' تقرير</span>'
+      + '<span class="nav-menu-arrow">' + svgIcon('chevron-left', 16) + '</span>'
+      + '</button>'
+      + '<button type="button" class="nav-menu-item" onclick="openStudentSubPage(\'custom\')">'
+      + '<span class="nav-menu-icon">' + svgIcon('settings', 18) + '</span>'
+      + '<div class="nav-menu-body"><div class="nav-menu-title">التخصيص والثوابت</div><div class="nav-menu-sub">الثوابت، أنواع السطور، النصوص الثابتة</div></div>'
+      + '<span class="nav-menu-arrow">' + svgIcon('chevron-left', 16) + '</span>'
+      + '</button>'
+      + '</div></div>';
+  } else {
+    var subTitles = {
+      sessions: 'سجل الحصص (' + sessions.length + ')',
+      monthly: 'التقارير الشهرية (' + monthlyCount + ')',
+      custom: 'التخصيص والثوابت'
+    };
+    var bodySection = '';
+    if (currentStudentSubPage === 'sessions') {
+      var tree = buildSessionsTree(sessions);
+      bodySection = '<div class="detail-section"><h3><span>' + svgIcon('calendar', 14) + ' سجل الحصص (' + sessions.length + ')</span><button class="btn btn-secondary btn-sm" onclick="toggleSessionSort()">' + (sessionSortOrder==='desc'? svgIcon('chevron-down', 12) + ' الأحدث' : svgIcon('chevron-down', 12) + ' الأقدم') + '</button></h3>' + tree + '</div>';
+    } else if (currentStudentSubPage === 'monthly') {
+      bodySection = '<div class="detail-section"><h3><span>' + svgIcon('file-text', 14) + ' التقارير الشهرية</span><button class="btn btn-primary btn-sm" onclick="openNewMonthlyReport(\'student\', \''+s.id+'\')">' + svgIcon('plus', 12) + ' تقرير</button></h3>' + buildMonthlyReportsTree('student', s.id) + '</div>';
+    } else if (currentStudentSubPage === 'custom') {
+      bodySection = '<div class="detail-section"><h3><span>' + svgIcon('pin', 14) + ' الثوابت</span></h3><div id="studentConstantsContainer">' + renderConstants('student', s.id) + '</div><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="addConstant(\'student\', \''+s.id+'\')">' + svgIcon('plus', 12) + ' إضافة ثابت</button></div>'
+        + '<div class="detail-section"><h3><span>' + svgIcon('list', 14) + ' أنواع السطور</span><button class="btn btn-primary btn-sm" onclick="openRowTypeEditor(\'student\', \''+s.id+'\', null)">' + svgIcon('plus', 12) + ' نوع</button></h3><div id="studentRowTypesContainer">' + renderOwnerRowTypes('student', s.id) + '</div></div>'
+        + '<div class="detail-section"><h3><span>' + svgIcon('pin', 14) + ' نصوص ثابتة</span><button class="btn btn-primary btn-sm" onclick="openStaticTextEditor(\'student\', \''+s.id+'\', null)">' + svgIcon('plus', 12) + ' نص</button></h3><div id="studentStaticTextsContainer">' + renderStaticTexts('student', s.id) + '</div></div>';
+    }
+    detail.innerHTML = '<div class="page-slide-in">'
+      + '<div class="subpage-header">'
+      + '<button type="button" class="btn btn-secondary btn-sm" onclick="backToStudentMain()">' + svgIcon('arrow-right', 14) + ' رجوع للطالب</button>'
+      + '<div style="flex:1;min-width:0">'
+      + '<h2>' + escapeHtml(subTitles[currentStudentSubPage] || '') + '</h2>'
+      + '<div style="font-size:.76rem;color:var(--text-muted);margin-top:2px">' + escapeHtml(s.name) + '</div>'
+      + '</div>'
+      + '</div>'
+      + bodySection
+      + '</div>';
+  }
   hydrateIcons(detail);
+}
+
+export function openStudentSubPage(sub){
+  if (!currentViewStudentId) return;
+  if (!currentStudentSubPage) pushAppNavState('student-sub-' + sub);
+  currentStudentSubPage = sub;
+  openStudentDetail(currentViewStudentId, studentBackTarget || undefined);
+  window.scrollTo(0, 0);
+}
+
+export function backToStudentMain(){
+  currentStudentSubPage = null;
+  if (currentViewStudentId) openStudentDetail(currentViewStudentId, studentBackTarget || undefined);
+  window.scrollTo(0, 0);
 }
 
 export function editStudent(id){
@@ -1819,9 +2542,11 @@ export function editStudent(id){
   levels.forEach(function(l){ levelOpts += '<option value="'+l+'"'+(s.currentLevel===l?' selected':'')+'>'+l+'</option>'; });
   openGenericModal('تعديل بيانات الطالب',
     '<div class="form-field"><label>اسم الطالب</label><input type="text" id="editStudentName" value="'+escapeAttr(s.name)+'"></div>'
+    +'<div class="form-field"><label>الجنس</label><select id="editStudentGender"><option value="male"'+(s.gender!=='female'?' selected':'')+'>طالب (ذكر)</option><option value="female"'+(s.gender==='female'?' selected':'')+'>طالبة (أنثى)</option></select></div>'
     +'<div class="form-field"><label>المجموعة</label><select id="editStudentGroup">'+groupsHTML+'</select></div>'
     +'<div class="form-field"><label>اسم ولي الأمر</label><input type="text" id="editStudentGuardian" value="'+escapeAttr(s.guardianName||'')+'"></div>'
     +'<div class="form-field"><label>رقم واتساب</label><input type="tel" id="editStudentPhone" value="'+escapeAttr(s.phone||'')+'" placeholder="+201234567890"></div>'
+    +'<div class="form-field"><label>اسم مستخدم تيليجرام (اختياري)</label><input type="text" id="editStudentTelegram" value="'+escapeAttr(s.telegram||'')+'" placeholder="@username أو رقم الهاتف"></div>'
     +'<div class="form-row-2">'
     +'<div class="form-field"><label>الدولة</label><select id="editStudentCountry" onchange="onStudentCountryChange()">'+countriesHTML+'</select></div>'
     +'<div class="form-field"><label>المنطقة الزمنية</label><input type="text" id="editStudentTimezone" value="'+escapeAttr(s.timezone||'')+'" readonly placeholder="تلقائي" onclick="openTimezonePicker(function(tz){document.getElementById(\'editStudentTimezone\').value=tz;})" style="cursor:pointer"></div>'
@@ -1850,10 +2575,12 @@ export function saveStudentEdit(id){
   var oldName = s.name;
   var nameChanged = (normalize(oldName) !== normalize(n));
   s.name = n;
+  s.gender = (document.getElementById('editStudentGender')||{}).value || 'male';
   var gid = document.getElementById('editStudentGroup').value;
   if(gid) s.groupId = gid;
   s.guardianName = (document.getElementById('editStudentGuardian').value || '').trim();
   s.phone = (document.getElementById('editStudentPhone').value || '').trim();
+  s.telegram = (document.getElementById('editStudentTelegram').value || '').trim();
   s.country = (document.getElementById('editStudentCountry').value || '').trim();
   s.timezone = (document.getElementById('editStudentTimezone').value || '').trim();
   s.birthDate = (document.getElementById('editStudentBirthDate').value || '').trim();
@@ -1984,6 +2711,7 @@ export function exportSessionWord(id){
 
 export function clearForm(){
   if(!confirm('مسح النموذج وبدء حصة جديدة؟')) return;
+  _currentLessonContext = null;
   var draftKey = window.DRAFT_KEY || 'quran_draft_v4';
   localStorage.removeItem(draftKey);
   document.getElementById('groupName').value = '';
@@ -2480,7 +3208,11 @@ export function mergeBackupData(importedData){
     var ig = importedData.groups.find(function(g){ return g.id === ise.groupId; });
     var ourG = ig ? data.groups.find(function(g){ return normalize(g.name) === normalize(ig.name); }) : null;
     var tgid = ourG ? ourG.id : ise.groupId;
-    var ex = data.sessions.find(function(s){ return s.groupId === tgid && s.date === ise.date; });
+    var ex = data.sessions.find(function(s){
+      if (s.groupId !== tgid || s.date !== ise.date) return false;
+      if (ise.time && s.time) return s.time === ise.time;
+      return !ise.time && !s.time;
+    });
     if(!ex){
       ise.groupId = tgid;
       ise.studentIds = (ise.studentIds || []).map(function(sid){
@@ -2491,7 +3223,11 @@ export function mergeBackupData(importedData){
       });
       data.sessions.push(ise); stats.sessionsAdded++;
     } else if((ise.savedAt || '') > (ex.savedAt || '')){
-      ex.report = ise.report; ex.data = ise.data; ex.savedAt = ise.savedAt; stats.sessionsUpdated++;
+      ex.report = ise.report; ex.data = ise.data; ex.savedAt = ise.savedAt;
+      if (ise.time) ex.time = ise.time;
+      if (ise.ruleId) ex.ruleId = ise.ruleId;
+      if (ise.extraId) ex.extraId = ise.extraId;
+      stats.sessionsUpdated++;
     }
   });
   (importedData.monthlyReports || []).forEach(function(ir){
@@ -2656,27 +3392,51 @@ export function openNewMonthlyReport(ownerType, ownerId){
   var now = new Date(); var mo = '';
   var monthNames = window.MONTH_NAMES || ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
   for(var i=0; i<12; i++) mo += '<option value="'+(i+1)+'"'+(i+1===(now.getMonth()+1)?' selected':'')+'>'+monthNames[i]+'</option>';
-  openGenericModal('تقرير شهري', '<div class="form-row-2"><div class="form-field"><label>الشهر</label><select id="newMonthlyMonth">'+mo+'</select></div><div class="form-field"><label>السنة</label><input type="number" id="newMonthlyYear" value="'+now.getFullYear()+'"></div></div>', '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button><button class="btn btn-primary" style="width:auto;margin:0" onclick="generateAndOpenMonthlyDraft(\''+ownerType+'\', \''+ownerId+'\')">توليد</button>');
+  openGenericModal(
+    'تقرير شهري',
+    '<div class="form-row-2"><div class="form-field"><label>الشهر</label><select id="newMonthlyMonth">'+mo+'</select></div><div class="form-field"><label>السنة</label><input type="number" id="newMonthlyYear" value="'+now.getFullYear()+'"></div></div>',
+    '<button type="button" class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button>'
+    + '<button type="button" class="btn btn-primary" style="width:auto;margin:0" onclick="generateAndOpenMonthlyDraft(\''+ownerType+'\', \''+ownerId+'\', \'ar\')">توليد بالعربية</button>'
+    + '<button type="button" class="btn btn-secondary" style="width:auto;margin:0" onclick="generateAndOpenMonthlyDraft(\''+ownerType+'\', \''+ownerId+'\', \'en\')">توليد بالإنجليزية</button>'
+  );
 }
 
-export function generateAndOpenMonthlyDraft(ownerType, ownerId){
+export async function generateAndOpenMonthlyDraft(ownerType, ownerId, lang){
+  lang = lang || 'ar';
   var month = parseInt(document.getElementById('newMonthlyMonth').value);
   var year = parseInt(document.getElementById('newMonthlyYear').value);
   if(!month || !year) return;
   var ex = data.monthlyReports.find(function(r){ return r.ownerType === ownerType && r.ownerId === ownerId && r.year === year && r.month === month; });
   if(ex){ if(!confirm('يوجد تقرير محفوظ. فتحه للتعديل؟')) return; openEditMonthlyReport(ex.id); return; }
-  var draft = generateMonthlyDraft(ownerType, ownerId, year, month);
-  openGenericModal('مسودة التقرير الشهري', '<textarea id="monthlyDraftText" style="min-height:400px;height:50vh;resize:vertical;font-family:\'IBM Plex Sans Arabic\',monospace;line-height:1.7">'+escapeHtml(draft)+'</textarea>', '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button><button class="btn btn-primary" style="width:auto;margin:0" onclick="saveNewMonthlyReport(\''+ownerType+'\', \''+ownerId+'\', '+year+', '+month+')">' + svgIcon('save', 14) + ' حفظ</button>');
+  if(lang === 'en') showNotify('⏳ جاري توليد التقرير الشهري بالإنجليزية...');
+  var draft = await generateMonthlyDraftAsync(ownerType, ownerId, year, month, lang);
+  var dirAttr = lang === 'en' ? 'ltr' : 'rtl';
+  openGenericModal('مسودة التقرير الشهري', '<textarea id="monthlyDraftText" dir="'+dirAttr+'" style="min-height:400px;height:50vh;resize:vertical;font-family:\'IBM Plex Sans Arabic\',monospace;line-height:1.7">'+escapeHtml(draft)+'</textarea>', '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button><button class="btn btn-primary" style="width:auto;margin:0" onclick="saveNewMonthlyReport(\''+ownerType+'\', \''+ownerId+'\', '+year+', '+month+')">' + svgIcon('save', 14) + ' حفظ</button>');
 }
 
-export function generateMonthlyDraftFromTab(){
+export async function generateMonthlyDraftFromTab(lang){
+  lang = lang || 'ar';
   var groupId = document.getElementById('monthlyGroupSelect').value;
   var month = parseInt(document.getElementById('monthlyMonthSelect').value);
   var year = parseInt(document.getElementById('monthlyYearInput').value);
   if(!groupId) return showNotify('اختر المجموعة');
-  var draft = generateMonthlyDraft('group', groupId, year, month);
-  document.getElementById('monthlyTabDraft').value = draft;
-  document.getElementById('monthlyTabDraftContainer').style.display = 'block';
+  var btnEn = document.getElementById('btnGenMonthlyEn');
+  if(lang === 'en'){
+    if(btnEn) btnEn.disabled = true;
+    showNotify('⏳ جاري توليد التقرير الشهري بالإنجليزية...');
+  }
+  try {
+    var draft = await generateMonthlyDraftAsync('group', groupId, year, month, lang);
+    var ta = document.getElementById('monthlyTabDraft');
+    if(ta){
+      ta.value = draft;
+      ta.dir = (lang === 'en') ? 'ltr' : 'rtl';
+    }
+    document.getElementById('monthlyTabDraftContainer').style.display = 'block';
+    if(lang === 'en') showNotify('✅ تم توليد التقرير الشهري بالإنجليزية');
+  } finally {
+    if(btnEn) btnEn.disabled = false;
+  }
 }
 
 export function saveMonthlyDraftFromTab(){
@@ -2733,6 +3493,213 @@ export async function deleteMonthlyReport(id){
 }
 
 /* ═══════════════ CUSTOM ROW TYPES & STATIC TEXTS ═══════════════ */
+export function getStandardRowTypes(){
+  return [
+    { id: 'std_1', name: 'تسميع جديد', section: 'study', form: 'surah-ayat' },
+    { id: 'std_2', name: 'تسميع مراجعة', section: 'study', form: 'surah-ayat' },
+    { id: 'std_3', name: 'قراءة', section: 'study', form: 'surah-ayat' },
+    { id: 'std_4', name: 'حفظ جديد', section: 'homework', form: 'surah-ayat' },
+    { id: 'std_5', name: 'مراجعة', section: 'homework', form: 'surah-ayat' }
+  ];
+}
+
+export function getGroupEffectiveRowTypes(grp){
+  if(grp && grp.reportSettings && Array.isArray(grp.reportSettings.rowTypes)){
+    return deepClone(grp.reportSettings.rowTypes);
+  }
+  var base = getStandardRowTypes();
+  if(grp && grp.reportSettings && Array.isArray(grp.reportSettings.customRowTypes) && grp.reportSettings.customRowTypes.length){
+    grp.reportSettings.customRowTypes.forEach(function(t){
+      base.push({
+        id: t.id || genId(),
+        name: t.name || '',
+        section: t.section || 'study',
+        form: t.form || 'surah-ayat'
+      });
+    });
+  }
+  return base;
+}
+
+export function getEffectiveRowTypes(student, grp){
+  if(student && student.reportSettings && Array.isArray(student.reportSettings.rowTypes)){
+    return deepClone(student.reportSettings.rowTypes);
+  }
+  return getGroupEffectiveRowTypes(grp);
+}
+
+export function getOwnerEffectiveRowTypes(ownerType, ownerId){
+  if(ownerType === 'group'){
+    var g = data.groups.find(function(x){ return x.id === ownerId; });
+    return getGroupEffectiveRowTypes(g);
+  }
+  var s = data.students.find(function(x){ return x.id === ownerId; });
+  var grp = s ? data.groups.find(function(x){ return x.id === s.groupId; }) : null;
+  return getEffectiveRowTypes(s, grp);
+}
+
+export function getCardEffectiveRowTypes(card){
+  if(card && Array.isArray(card._lessonRowTypes)){
+    return deepClone(card._lessonRowTypes);
+  }
+  var gnEl = document.getElementById('groupName');
+  var gn = gnEl ? normalize(gnEl.value) : '';
+  var grp = gn ? data.groups.find(function(g){ return normalize(g.name) === gn; }) : null;
+  var stNameEl = card ? card.querySelector('.student-name') : null;
+  var stName = stNameEl ? normalize(stNameEl.value) : '';
+  var student = null;
+  if(stName){
+    if(grp) student = data.students.find(function(s){ return s.groupId === grp.id && normalize(s.name) === stName; }) || null;
+    else student = data.students.find(function(s){ return normalize(s.name) === stName; }) || null;
+  }
+  return getEffectiveRowTypes(student, grp);
+}
+
+function _materializeOwnerRowTypes(ownerType, ownerId){
+  var o = ownerType === 'group'
+    ? data.groups.find(function(x){ return x.id === ownerId; })
+    : data.students.find(function(x){ return x.id === ownerId; });
+  if(!o) return null;
+  if(!o.reportSettings || typeof o.reportSettings !== 'object'){
+    o.reportSettings = ownerType === 'group' ? { customRowTypes: [], staticTexts: [] } : {};
+  }
+  if(!Array.isArray(o.reportSettings.rowTypes)){
+    if(ownerType === 'group'){
+      o.reportSettings.rowTypes = getGroupEffectiveRowTypes(o);
+      o.reportSettings.customRowTypes = [];
+    } else {
+      var grp = data.groups.find(function(x){ return x.id === o.groupId; }) || null;
+      o.reportSettings.rowTypes = getEffectiveRowTypes(o, grp);
+    }
+  }
+  return o.reportSettings.rowTypes;
+}
+
+function _refreshOwnerRowTypesUI(ownerType, ownerId){
+  var c = document.getElementById(ownerType === 'group' ? 'groupRowTypesContainer' : 'studentRowTypesContainer');
+  if(c){
+    c.innerHTML = renderOwnerRowTypes(ownerType, ownerId);
+    hydrateIcons(c);
+  }
+  rebuildAllRowDropdowns();
+}
+
+export function renderOwnerRowTypes(ownerType, ownerId){
+  var o = ownerType === 'group'
+    ? data.groups.find(function(x){ return x.id === ownerId; })
+    : data.students.find(function(x){ return x.id === ownerId; });
+  if(!o) return '';
+  var isInherited = !(o.reportSettings && Array.isArray(o.reportSettings.rowTypes));
+  var list = getOwnerEffectiveRowTypes(ownerType, ownerId);
+  var sectionLabels = window.SECTION_LABELS || { study: 'دراسة اليوم', homework: 'المطلوب' };
+  var formLabels = window.FORM_LABELS || { 'surah-ayat': 'سورة وآيات', 'free-text': 'نص حر' };
+  var html = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px">';
+  if(ownerType === 'student'){
+    html += isInherited
+      ? '<span style="font-size:.78rem;color:var(--text-muted)">موروث من المجموعة (يُحفظ كنسخة مستقلة عند التعديل)</span>'
+      : '<span class="cfg-badge blue">مخصص للطالب</span><button type="button" class="btn btn-secondary btn-sm" onclick="resetOwnerRowTypes(\'student\', \''+ownerId+'\')">' + svgIcon('refresh', 12) + ' استعادة من المجموعة</button>';
+  } else {
+    html += isInherited
+      ? '<span style="font-size:.78rem;color:var(--text-muted)">الأنواع القياسية</span>'
+      : '<span class="cfg-badge blue">مخصص للمجموعة</span><button type="button" class="btn btn-secondary btn-sm" onclick="resetOwnerRowTypes(\'group\', \''+ownerId+'\')">' + svgIcon('refresh', 12) + ' استعادة القياسي</button>';
+  }
+  html += '</div>';
+  if(!list.length){
+    return html + '<div class="cfg-empty">لا توجد أنواع سطور</div>';
+  }
+  list.forEach(function(t, idx){
+    var upBtn = '<button type="button" class="btn btn-secondary btn-sm" onclick="moveOwnerRowType(\''+ownerType+'\', \''+ownerId+'\', '+idx+', -1)" title="أعلى"'+(idx===0?' disabled':'')+'>' + svgIcon('arrow-up', 12) + '</button>';
+    var downBtn = '<button type="button" class="btn btn-secondary btn-sm" onclick="moveOwnerRowType(\''+ownerType+'\', \''+ownerId+'\', '+idx+', 1)" title="أسفل"'+(idx===list.length-1?' disabled':'')+'>' + svgIcon('arrow-down', 12) + '</button>';
+    var editBtn = '<button type="button" class="btn btn-secondary btn-sm" onclick="openRowTypeEditor(\''+ownerType+'\', \''+ownerId+'\', \''+escapeAttr(t.id)+'\')" title="تعديل">' + svgIcon('edit-3', 12) + '</button>';
+    var delBtn = '<button type="button" class="btn btn-danger btn-sm" onclick="deleteOwnerRowType(\''+ownerType+'\', \''+ownerId+'\', \''+escapeAttr(t.id)+'\')" title="حذف">' + svgIcon('trash-2', 12) + '</button>';
+    html += '<div class="cfg-row"><div class="cfg-row-info"><div class="cfg-row-title">' + escapeHtml(t.name || '(بدون)') + '</div><div class="cfg-row-meta"><span class="cfg-badge">' + escapeHtml(sectionLabels[t.section] || t.section) + '</span><span class="cfg-badge blue">' + escapeHtml(formLabels[t.form] || t.form) + '</span></div></div><div class="btn-row">' + upBtn + downBtn + editBtn + delBtn + '</div></div>';
+  });
+  return html;
+}
+
+export function openRowTypeEditor(ownerType, ownerId, typeId){
+  var list = getOwnerEffectiveRowTypes(ownerType, ownerId);
+  var ex = typeId ? list.find(function(t){ return t.id === typeId; }) : null;
+  var isE = !!ex;
+  var name = ex ? ex.name : '';
+  var sec = ex ? ex.section : 'study';
+  var form = ex ? ex.form : 'surah-ayat';
+  var sectionLabels = window.SECTION_LABELS || { study: 'دراسة اليوم', homework: 'المطلوب' };
+  var formLabels = window.FORM_LABELS || { 'surah-ayat': 'سورة وآيات', 'free-text': 'نص حر' };
+  var sO = Object.keys(sectionLabels).map(function(k){ return '<option value="'+k+'"'+(k===sec?' selected':'')+'>'+sectionLabels[k]+'</option>'; }).join('');
+  var fO = Object.keys(formLabels).map(function(k){ return '<option value="'+k+'"'+(k===form?' selected':'')+'>'+formLabels[k]+'</option>'; }).join('');
+  openGenericModal(isE ? 'تعديل نوع سطر' : 'إضافة نوع سطر',
+    '<div class="form-field"><label>اسم النوع</label><input type="text" id="rowTypeNameInput" value="'+escapeAttr(name)+'" placeholder="مثال: استكمال المقرأة"></div>'
+    + '<div class="form-row-2"><div class="form-field"><label>القسم</label><select id="rowTypeSectionSelect">'+sO+'</select></div>'
+    + '<div class="form-field"><label>الشكل</label><select id="rowTypeFormSelect">'+fO+'</select></div></div>',
+    '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button><button class="btn btn-primary" style="width:auto;margin:0" onclick="saveOwnerRowType(\''+ownerType+'\', \''+ownerId+'\', '+(isE ? '\''+escapeAttr(typeId)+'\'' : 'null')+')">' + svgIcon('save', 14) + ' حفظ</button>');
+  setTimeout(function(){ var i = document.getElementById('rowTypeNameInput'); if(i) i.focus(); }, 50);
+}
+
+export function saveOwnerRowType(ownerType, ownerId, typeId){
+  var name = (document.getElementById('rowTypeNameInput').value || '').trim();
+  var sec = document.getElementById('rowTypeSectionSelect').value;
+  var form = document.getElementById('rowTypeFormSelect').value;
+  if(!name){ showNotify('أدخل اسمًا'); return; }
+  var list = _materializeOwnerRowTypes(ownerType, ownerId);
+  if(!list) return;
+  if(list.some(function(t){ return t.id !== typeId && t.section === sec && normalize(t.name) === normalize(name); })){
+    showNotify('الاسم موجود بالفعل في هذا القسم'); return;
+  }
+  if(typeId){
+    var ex = list.find(function(t){ return t.id === typeId; });
+    if(!ex) return;
+    ex.name = name; ex.section = sec; ex.form = form;
+  } else {
+    list.push({ id: genId(), name: name, section: sec, form: form });
+  }
+  saveData(); closeGenericModal();
+  _refreshOwnerRowTypesUI(ownerType, ownerId);
+  showNotify('تم الحفظ');
+}
+
+export function deleteOwnerRowType(ownerType, ownerId, typeId){
+  if(!confirm('حذف هذا النوع؟')) return;
+  var list = _materializeOwnerRowTypes(ownerType, ownerId);
+  if(!list) return;
+  var o = ownerType === 'group'
+    ? data.groups.find(function(x){ return x.id === ownerId; })
+    : data.students.find(function(x){ return x.id === ownerId; });
+  if(!o || !o.reportSettings) return;
+  o.reportSettings.rowTypes = list.filter(function(t){ return t.id !== typeId; });
+  saveData();
+  _refreshOwnerRowTypesUI(ownerType, ownerId);
+  showNotify('تم الحذف');
+}
+
+export function moveOwnerRowType(ownerType, ownerId, index, delta){
+  var list = _materializeOwnerRowTypes(ownerType, ownerId);
+  if(!list) return;
+  var target = index + delta;
+  if(index < 0 || index >= list.length || target < 0 || target >= list.length) return;
+  var tmp = list[index];
+  list[index] = list[target];
+  list[target] = tmp;
+  saveData();
+  _refreshOwnerRowTypesUI(ownerType, ownerId);
+}
+
+export function resetOwnerRowTypes(ownerType, ownerId){
+  var msg = ownerType === 'student'
+    ? 'إلغاء تخصيص الطالب واستعادة أنواع المجموعة؟'
+    : 'استعادة الأنواع القياسية الخمسة للمجموعة؟';
+  if(!confirm(msg)) return;
+  var o = ownerType === 'group'
+    ? data.groups.find(function(x){ return x.id === ownerId; })
+    : data.students.find(function(x){ return x.id === ownerId; });
+  if(!o || !o.reportSettings) return;
+  delete o.reportSettings.rowTypes;
+  if(ownerType === 'group') o.reportSettings.customRowTypes = [];
+  saveData();
+  _refreshOwnerRowTypesUI(ownerType, ownerId);
+  showNotify('تمت الاستعادة');
+}
+
 export function renderCustomRowTypes(groupId){
   var g = data.groups.find(function(x){ return x.id === groupId; });
   if(!g || !g.reportSettings || !g.reportSettings.customRowTypes || !g.reportSettings.customRowTypes.length) return '<div class="cfg-empty">لا توجد أنواع</div>';
@@ -2821,7 +3788,14 @@ export function openStaticTextEditor(ownerType, ownerId, textId){
   var sectionLabels = window.SECTION_LABELS || { study: 'دراسة اليوم', homework: 'المطلوب' };
   var subjectLabelsSt = window.SUBJECT_LABELS_ST || { quran: 'قرآن', arabic: 'عربية', islamic: 'شرعية' };
   var modeLabels = window.MODE_LABELS || { full: 'سطر كامل', suffix: 'لاحقة' };
-  var allRowTypes = window.ALL_ROW_TYPES || ['تسميع جديد','تسميع مراجعة','قراءة','حفظ جديد','مراجعة'];
+  var ownerTypes = getOwnerEffectiveRowTypes(ownerType, ownerId).map(function(t){ return t.name; });
+  var fallbackTypes = window.ALL_ROW_TYPES || ['تسميع جديد','تسميع مراجعة','قراءة','حفظ جديد','مراجعة'];
+  var allRowTypes = [];
+  (ownerTypes.length ? ownerTypes : fallbackTypes).forEach(function(n){
+    if(n && allRowTypes.indexOf(n) === -1) allRowTypes.push(n);
+  });
+  if(isE && tT && allRowTypes.indexOf(tT) === -1) allRowTypes.push(tT);
+  if(!allRowTypes.length) allRowTypes = fallbackTypes.slice();
   var sO = Object.keys(sectionLabels).map(function(k){ return '<option value="'+k+'"'+(k===sec?' selected':'')+'>'+sectionLabels[k]+'</option>'; }).join('');
   var subO = Object.keys(subjectLabelsSt).map(function(k){ return '<option value="'+k+'"'+(k===sub?' selected':'')+'>'+subjectLabelsSt[k]+'</option>'; }).join('');
   var mO = Object.keys(modeLabels).map(function(k){ return '<option value="'+k+'"'+(k===mode?' selected':'')+'>'+modeLabels[k]+'</option>'; }).join('');
@@ -2875,20 +3849,20 @@ export function deleteStaticText(ownerType, ownerId, textId){
   showNotify('تم الحذف');
 }
 
-export function getRowTypeForm(typeName){
+export function getRowTypeForm(typeName, card){
+  var types = getCardEffectiveRowTypes(card || null);
+  var found = types.find(function(t){ return t.name === typeName; });
+  if(found) return found.form || 'surah-ayat';
   var c = currentCustomRowTypes.find(function(t){ return t.name === typeName; });
   return c ? (c.form || 'surah-ayat') : 'surah-ayat';
 }
 
-export function buildTypeOptions(isStudy, selectedLabel){
-  var std = isStudy ? ['تسميع جديد', 'تسميع مراجعة', 'قراءة'] : ['حفظ جديد', 'مراجعة'];
+export function buildTypeOptions(isStudy, selectedLabel, rowTypesOverride){
+  var sec = isStudy ? 'study' : 'homework';
+  var source = Array.isArray(rowTypesOverride) ? rowTypesOverride : getCardEffectiveRowTypes(null);
+  var secTypes = source.filter(function(t){ return t.section === sec; });
   var html = ''; var found = false;
-  std.forEach(function(t){
-    if(t === selectedLabel) found = true;
-    html += '<option value="'+escapeAttr(t)+'"'+(t===selectedLabel?' selected':'')+'>'+escapeHtml(t)+'</option>';
-  });
-  var cus = currentCustomRowTypes.filter(function(t){ return t.section === (isStudy ? 'study' : 'homework'); });
-  cus.forEach(function(t){
+  secTypes.forEach(function(t){
     if(t.name === selectedLabel) found = true;
     html += '<option value="'+escapeAttr(t.name)+'"'+(t.name===selectedLabel?' selected':'')+'>'+escapeHtml(t.name)+'</option>';
   });
@@ -2898,29 +3872,329 @@ export function buildTypeOptions(isStudy, selectedLabel){
 
 export function handleRowTypeChange(select){
   var row = select.closest('.row-item'); if(!row) return;
+  var card = select.closest('.student-card');
   var nT = select.value;
-  var nF = getRowTypeForm(nT);
+  var nF = getRowTypeForm(nT, card);
   var cF = row.classList.contains('free-text-row') ? 'free-text' : 'surah-ayat';
   if(cF === nF) return;
   var isStudy = !!row.closest('.study-rows-container');
   var sT = isStudy ? 'study' : 'homework';
+  var cardTypes = getCardEffectiveRowTypes(card);
   var w = document.createElement('div');
-  w.innerHTML = renderRow(sT, nT, nF);
+  w.innerHTML = renderRow(sT, nT, nF, cardTypes);
   var nR = w.firstElementChild; if(!nR) return;
   row.parentNode.replaceChild(nR, row);
+  hydrateIcons(nR);
   scheduleSaveDraft();
 }
 
-export function rebuildAllRowDropdowns(){
-  document.querySelectorAll('.row-item').forEach(function(row){
+export function rebuildCardRowDropdowns(card){
+  if(!card) return;
+  var cardTypes = getCardEffectiveRowTypes(card);
+  card.querySelectorAll('.row-item').forEach(function(row){
     var s = row.querySelector('.row-type-select'); if(!s) return;
     var isStudy = !!row.closest('.study-rows-container');
     var cv = s.value;
-    s.innerHTML = buildTypeOptions(isStudy, cv);
+    s.innerHTML = buildTypeOptions(isStudy, cv, cardTypes);
     var has = false;
     for(var i=0; i<s.options.length; i++){ if(s.options[i].value === cv){ has = true; break; } }
     if(!has && s.options.length) s.value = s.options[0].value;
   });
+}
+
+export function rebuildAllRowDropdowns(){
+  document.querySelectorAll('.student-card').forEach(function(card){
+    rebuildCardRowDropdowns(card);
+  });
+}
+
+export function isRowEmpty(row){
+  if(!row) return true;
+  if(row.classList.contains('free-text-row')){
+    var ft = row.querySelector('.free-text-input');
+    return !(ft && ft.value.trim());
+  }
+  var ms = row.querySelector('.main-surah');
+  var fa = row.querySelector('.from-aya');
+  var ta = row.querySelector('.to-aya');
+  var ts = row.querySelector('.to-surah');
+  return !((ms && ms.value.trim()) || (fa && fa.value.trim()) || (ta && ta.value.trim()) || (ts && ts.value.trim()));
+}
+
+export function syncCardRowsWithNewTypes(card, newTypes, renameMap){
+  if(!card) return;
+  renameMap = renameMap || {};
+  ['study', 'homework'].forEach(function(sec){
+    var container = card.querySelector(sec === 'study' ? '.study-rows-container' : '.homework-rows-container');
+    if(!container) return;
+    var secTypes = (newTypes || []).filter(function(t){ return t.section === sec; });
+    var existingRows = Array.prototype.slice.call(container.querySelectorAll('.row-item'));
+    var filledByType = {};
+    var filledOrder = [];
+    existingRows.forEach(function(r){
+      if(isRowEmpty(r)) return;
+      var rd = readRow(r);
+      if(renameMap[rd.type]) rd.type = renameMap[rd.type];
+      var matched = secTypes.find(function(t){ return t.name === rd.type; });
+      if(matched && matched.form && matched.form !== rd.form){
+        rd.form = matched.form;
+      }
+      if(!filledByType[rd.type]){
+        filledByType[rd.type] = [];
+        filledOrder.push(rd.type);
+      }
+      filledByType[rd.type].push(rd);
+    });
+    var finalRows = [];
+    var usedTypes = {};
+    secTypes.forEach(function(t){
+      if(filledByType[t.name] && filledByType[t.name].length){
+        filledByType[t.name].forEach(function(rd){ finalRows.push(rd); });
+        usedTypes[t.name] = true;
+      } else {
+        finalRows.push({ type: t.name, form: t.form || 'surah-ayat', rangeType: 'ayat', mainSurah: '', from: '', to: '', toSurah: '', text: '' });
+      }
+    });
+    filledOrder.forEach(function(tName){
+      if(!usedTypes[tName] && filledByType[tName]){
+        filledByType[tName].forEach(function(rd){ finalRows.push(rd); });
+      }
+    });
+    container.innerHTML = '';
+    finalRows.forEach(function(rd){
+      var wrap = document.createElement('div');
+      wrap.innerHTML = renderRow(sec, rd.type, rd.form || 'surah-ayat', newTypes);
+      var row = wrap.firstElementChild;
+      if(!row) return;
+      if((rd.form || 'surah-ayat') === 'free-text'){
+        var fi = row.querySelector('.free-text-input');
+        if(fi) fi.value = safe(rd.text);
+      } else {
+        var ms = row.querySelector('.main-surah');
+        if(ms) ms.value = safe(rd.mainSurah);
+        var rangeSel = row.querySelector('.range-type-select');
+        var ayatRange = row.querySelector('.ayat-range');
+        var surahsRange = row.querySelector('.surahs-range');
+        var rt = rd.rangeType || 'ayat';
+        if(rangeSel) rangeSel.value = rt;
+        if(rt === 'surahs'){
+          if(ayatRange) ayatRange.style.display = 'none';
+          if(surahsRange) surahsRange.style.display = 'flex';
+          var ts = row.querySelector('.to-surah');
+          if(ts) ts.value = safe(rd.toSurah);
+        } else {
+          if(ayatRange) ayatRange.style.display = 'flex';
+          if(surahsRange) surahsRange.style.display = 'none';
+          var fa = row.querySelector('.from-aya');
+          if(fa) fa.value = safe(rd.from);
+          var ta = row.querySelector('.to-aya');
+          if(ta) ta.value = safe(rd.to);
+        }
+      }
+      container.appendChild(row);
+    });
+    hydrateIcons(container);
+  });
+}
+
+var _quickRowContext = null;
+var _quickRowDraft = [];
+var _quickRowRenames = {};
+
+function _getQuickRowContext(card){
+  var gnEl = document.getElementById('groupName');
+  var groupName = gnEl ? gnEl.value.trim() : '';
+  var grp = groupName ? data.groups.find(function(g){ return normalize(g.name) === normalize(groupName); }) || null : null;
+  var stEl = card ? card.querySelector('.student-name') : null;
+  var studentName = stEl ? stEl.value.trim() : '';
+  var student = null;
+  if(studentName){
+    if(grp) student = data.students.find(function(s){ return s.groupId === grp.id && normalize(s.name) === normalize(studentName); }) || null;
+    else student = data.students.find(function(s){ return normalize(s.name) === normalize(studentName); }) || null;
+  }
+  return { card: card, grp: grp, student: student, groupName: groupName, studentName: studentName };
+}
+
+export function renderQuickRowModalHTML(){
+  var sectionLabels = window.SECTION_LABELS || { study: 'دراسة اليوم', homework: 'المطلوب' };
+  var formLabels = window.FORM_LABELS || { 'surah-ayat': 'سورة وآيات', 'free-text': 'نص حر' };
+  var ctx = _quickRowContext || {};
+  var metaParts = [];
+  if(ctx.studentName) metaParts.push('الطالب: <strong>' + escapeHtml(ctx.studentName) + '</strong>');
+  if(ctx.groupName) metaParts.push('المجموعة: <strong>' + escapeHtml(ctx.groupName) + '</strong>');
+  var html = metaParts.length
+    ? '<div style="font-size:.82rem;color:var(--text-muted);margin-bottom:10px">' + metaParts.join(' • ') + '</div>'
+    : '';
+  html += '<div id="quickRowListBox">';
+  if(!_quickRowDraft.length){
+    html += '<div class="cfg-empty">لا توجد أنواع سطور</div>';
+  } else {
+    _quickRowDraft.forEach(function(t, idx){
+      var upBtn = '<button type="button" class="btn btn-secondary btn-sm" onclick="moveQuickRowItem('+idx+', -1)" title="أعلى"'+(idx===0?' disabled':'')+'>' + svgIcon('arrow-up', 12) + '</button>';
+      var downBtn = '<button type="button" class="btn btn-secondary btn-sm" onclick="moveQuickRowItem('+idx+', 1)" title="أسفل"'+(idx===_quickRowDraft.length-1?' disabled':'')+'>' + svgIcon('arrow-down', 12) + '</button>';
+      var editBtn = '<button type="button" class="btn btn-secondary btn-sm" onclick="openQuickRowInlineEditor('+idx+')" title="تعديل">' + svgIcon('edit-3', 12) + '</button>';
+      var delBtn = '<button type="button" class="btn btn-danger btn-sm" onclick="deleteQuickRowItem('+idx+')" title="حذف">' + svgIcon('trash-2', 12) + '</button>';
+      html += '<div class="cfg-row"><div class="cfg-row-info"><div class="cfg-row-title">' + escapeHtml(t.name || '(بدون)') + '</div><div class="cfg-row-meta"><span class="cfg-badge">' + escapeHtml(sectionLabels[t.section] || t.section) + '</span><span class="cfg-badge blue">' + escapeHtml(formLabels[t.form] || t.form) + '</span></div></div><div class="btn-row">' + upBtn + downBtn + editBtn + delBtn + '</div></div>';
+    });
+  }
+  html += '</div>';
+  html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
+    + '<button type="button" class="btn btn-secondary btn-sm" onclick="openQuickRowInlineEditor(-1)">' + svgIcon('plus', 12) + ' نوع جديد</button>'
+    + '<button type="button" class="btn btn-secondary btn-sm" onclick="resetQuickRowList()">' + svgIcon('refresh', 12) + ' استعادة القياسي</button>'
+    + '</div>';
+  html += '<div id="quickRowInlineBox" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--card-border);border-radius:10px"></div>';
+  return html;
+}
+
+export function renderQuickRowModalFooter(){
+  var ctx = _quickRowContext || {};
+  var html = '<button type="button" class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button>';
+  html += '<button type="button" class="btn btn-primary" style="width:auto;margin:0" onclick="applyQuickRowTypes(\'lesson\')">لهذه الحصة فقط</button>';
+  if(ctx.student){
+    html += '<button type="button" class="btn btn-secondary" onclick="applyQuickRowTypes(\'student\')">حفظ للطالب</button>';
+  }
+  if(ctx.grp){
+    html += '<button type="button" class="btn btn-secondary" onclick="applyQuickRowTypes(\'group\')">حفظ للمجموعة</button>';
+  }
+  return html;
+}
+
+export function openQuickRowTypesModal(btn){
+  var card = btn && btn.closest ? btn.closest('.student-card') : null;
+  if(!card) return;
+  _quickRowContext = _getQuickRowContext(card);
+  _quickRowDraft = deepClone(getCardEffectiveRowTypes(card));
+  _quickRowRenames = {};
+  openGenericModal('تخصيص أنواع السطور', renderQuickRowModalHTML(), renderQuickRowModalFooter());
+}
+
+export function openQuickRowInlineEditor(idx){
+  var box = document.getElementById('quickRowInlineBox');
+  if(!box) return;
+  var isEdit = idx >= 0 && idx < _quickRowDraft.length;
+  var item = isEdit ? _quickRowDraft[idx] : { name: '', section: 'study', form: 'surah-ayat' };
+  var sectionLabels = window.SECTION_LABELS || { study: 'دراسة اليوم', homework: 'المطلوب' };
+  var formLabels = window.FORM_LABELS || { 'surah-ayat': 'سورة وآيات', 'free-text': 'نص حر' };
+  var sO = Object.keys(sectionLabels).map(function(k){ return '<option value="'+k+'"'+(k===item.section?' selected':'')+'>'+sectionLabels[k]+'</option>'; }).join('');
+  var fO = Object.keys(formLabels).map(function(k){ return '<option value="'+k+'"'+(k===item.form?' selected':'')+'>'+formLabels[k]+'</option>'; }).join('');
+  box.innerHTML = '<div style="font-weight:700;font-size:.85rem;margin-bottom:8px">' + (isEdit ? 'تعديل نوع السطر' : 'إضافة نوع سطر') + '</div>'
+    + '<div class="form-field"><label>اسم النوع</label><input type="text" id="quickRowEditName" value="'+escapeAttr(item.name)+'" placeholder="مثال: استكمال المقرأة"></div>'
+    + '<div class="form-row-2"><div class="form-field"><label>القسم</label><select id="quickRowEditSection">'+sO+'</select></div>'
+    + '<div class="form-field"><label>الشكل</label><select id="quickRowEditForm">'+fO+'</select></div></div>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">'
+    + '<button type="button" class="btn btn-secondary btn-sm" onclick="cancelQuickRowInline()">إلغاء</button>'
+    + '<button type="button" class="btn btn-primary btn-sm" style="width:auto;margin:0" onclick="saveQuickRowInline('+idx+')">' + svgIcon('check', 12) + ' موافق</button>'
+    + '</div>';
+  box.style.display = 'block';
+  hydrateIcons(box);
+  setTimeout(function(){ var i = document.getElementById('quickRowEditName'); if(i) i.focus(); }, 30);
+}
+
+export function saveQuickRowInline(idx){
+  var nameEl = document.getElementById('quickRowEditName');
+  var secEl = document.getElementById('quickRowEditSection');
+  var formEl = document.getElementById('quickRowEditForm');
+  if(!nameEl || !secEl || !formEl) return;
+  var name = (nameEl.value || '').trim();
+  var sec = secEl.value;
+  var form = formEl.value;
+  if(!name){ showNotify('أدخل اسمًا'); return; }
+  if(_quickRowDraft.some(function(t, i){ return i !== idx && t.section === sec && normalize(t.name) === normalize(name); })){
+    showNotify('الاسم موجود بالفعل في هذا القسم'); return;
+  }
+  if(idx >= 0 && idx < _quickRowDraft.length){
+    var oldName = _quickRowDraft[idx].name;
+    if(oldName && oldName !== name){
+      var origKey = null;
+      Object.keys(_quickRowRenames).forEach(function(k){
+        if(_quickRowRenames[k] === oldName) origKey = k;
+      });
+      if(origKey) _quickRowRenames[origKey] = name;
+      else _quickRowRenames[oldName] = name;
+    }
+    _quickRowDraft[idx].name = name;
+    _quickRowDraft[idx].section = sec;
+    _quickRowDraft[idx].form = form;
+  } else {
+    _quickRowDraft.push({ id: genId(), name: name, section: sec, form: form });
+  }
+  var body = document.getElementById('genericModalBody');
+  if(body){
+    body.innerHTML = renderQuickRowModalHTML();
+    hydrateIcons(body);
+  }
+}
+
+export function cancelQuickRowInline(){
+  var box = document.getElementById('quickRowInlineBox');
+  if(box){ box.style.display = 'none'; box.innerHTML = ''; }
+}
+
+export function deleteQuickRowItem(idx){
+  if(idx < 0 || idx >= _quickRowDraft.length) return;
+  _quickRowDraft.splice(idx, 1);
+  var body = document.getElementById('genericModalBody');
+  if(body){
+    body.innerHTML = renderQuickRowModalHTML();
+    hydrateIcons(body);
+  }
+}
+
+export function moveQuickRowItem(idx, delta){
+  var target = idx + delta;
+  if(idx < 0 || idx >= _quickRowDraft.length || target < 0 || target >= _quickRowDraft.length) return;
+  var tmp = _quickRowDraft[idx];
+  _quickRowDraft[idx] = _quickRowDraft[target];
+  _quickRowDraft[target] = tmp;
+  var body = document.getElementById('genericModalBody');
+  if(body){
+    body.innerHTML = renderQuickRowModalHTML();
+    hydrateIcons(body);
+  }
+}
+
+export function resetQuickRowList(){
+  _quickRowDraft = getStandardRowTypes();
+  _quickRowRenames = {};
+  var body = document.getElementById('genericModalBody');
+  if(body){
+    body.innerHTML = renderQuickRowModalHTML();
+    hydrateIcons(body);
+  }
+}
+
+export function applyQuickRowTypes(scope){
+  if(!_quickRowContext || !_quickRowContext.card) return;
+  var ctx = _quickRowContext;
+  var newTypes = deepClone(_quickRowDraft || []);
+  if(scope === 'lesson'){
+    ctx.card._lessonRowTypes = deepClone(newTypes);
+    syncCardRowsWithNewTypes(ctx.card, newTypes, _quickRowRenames);
+    showNotify('تم التطبيق على هذه الحصة فقط');
+  } else if(scope === 'student'){
+    if(!ctx.student){ showNotify('الطالب غير مسجل'); return; }
+    if(!ctx.student.reportSettings || typeof ctx.student.reportSettings !== 'object') ctx.student.reportSettings = {};
+    ctx.student.reportSettings.rowTypes = deepClone(newTypes);
+    ctx.card._lessonRowTypes = null;
+    saveData();
+    syncCardRowsWithNewTypes(ctx.card, newTypes, _quickRowRenames);
+    showNotify('تم الحفظ للطالب');
+  } else if(scope === 'group'){
+    if(!ctx.grp){ showNotify('المجموعة غير مسجلة'); return; }
+    if(!ctx.grp.reportSettings || typeof ctx.grp.reportSettings !== 'object') ctx.grp.reportSettings = { customRowTypes: [], staticTexts: [] };
+    ctx.grp.reportSettings.rowTypes = deepClone(newTypes);
+    ctx.grp.reportSettings.customRowTypes = [];
+    ctx.card._lessonRowTypes = null;
+    saveData();
+    document.querySelectorAll('.student-card').forEach(function(c){
+      if(Array.isArray(c._lessonRowTypes)) return;
+      var cTypes = getCardEffectiveRowTypes(c);
+      syncCardRowsWithNewTypes(c, cTypes, c === ctx.card ? _quickRowRenames : {});
+    });
+    showNotify('تم الحفظ للمجموعة');
+  }
+  scheduleSaveDraft();
+  closeGenericModal();
 }
 
 export function renderActiveStaticTexts(){
@@ -3022,28 +4296,88 @@ export function updatePendingBadge(){
     if(count > 0){ b.textContent = count; b.style.display = 'inline-block'; }
     else b.style.display = 'none';
   });
+  _activeBellData = collectActiveNotifications();
+  updateBellBadges();
 }
 
 /* ═══════════════ NOTIFICATIONS ═══════════════ */
+var FIRED_NOTIFS_KEY = 'quran_fired_notifs_v1';
+
+function _loadFiredNotifs(){
+  var todayISO = toDateISO(new Date());
+  try {
+    var raw = localStorage.getItem(FIRED_NOTIFS_KEY);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.date === todayISO && Array.isArray(parsed.keys)) {
+        return { date: todayISO, keys: parsed.keys };
+      }
+    }
+  } catch (e) {}
+  return { date: todayISO, keys: [] };
+}
+
+function _saveFiredNotifs(store){
+  try {
+    localStorage.setItem(FIRED_NOTIFS_KEY, JSON.stringify(store));
+  } catch (e) {}
+}
+
+function _isNotifFired(key){
+  var store = _loadFiredNotifs();
+  return store.keys.indexOf(key) !== -1;
+}
+
+function _markNotifFired(key){
+  var store = _loadFiredNotifs();
+  if (store.keys.indexOf(key) === -1) {
+    store.keys.push(key);
+    _saveFiredNotifs(store);
+  }
+}
+
 export function playAlarmBeep(){
   ensureAudioContext();
   if(!window._alarmCtx) return;
   try {
     var ctx = window._alarmCtx;
     var t = data.settings.notifSoundType || '1';
-    var f = t === '2' ? 660 : (t === '3' ? 1100 : 880);
-    var n = t === '3' ? 4 : 3;
-    for(var i=0; i<n; i++){
+    var notes;
+    if (t === '2') {
+      notes = [
+        { f: 783.99, d: 0.18, gap: 0.04 },
+        { f: 1046.50, d: 0.24, gap: 0.14 },
+        { f: 783.99, d: 0.18, gap: 0.04 },
+        { f: 1046.50, d: 0.28, gap: 0.0 }
+      ];
+    } else if (t === '3') {
+      notes = [
+        { f: 587.33, d: 0.16, gap: 0.04 },
+        { f: 739.99, d: 0.16, gap: 0.04 },
+        { f: 880.00, d: 0.18, gap: 0.04 },
+        { f: 1174.66, d: 0.34, gap: 0.0 }
+      ];
+    } else {
+      notes = [
+        { f: 523.25, d: 0.20, gap: 0.06 },
+        { f: 659.25, d: 0.20, gap: 0.06 },
+        { f: 783.99, d: 0.32, gap: 0.0 }
+      ];
+    }
+    var cur = ctx.currentTime + 0.02;
+    notes.forEach(function(n){
       var o = ctx.createOscillator();
       var g = ctx.createGain();
       o.connect(g); g.connect(ctx.destination);
-      o.frequency.value = f; o.type = 'sine';
-      var ts = ctx.currentTime + i*0.35;
-      g.gain.setValueAtTime(0, ts);
-      g.gain.linearRampToValueAtTime(0.3, ts+0.05);
-      g.gain.exponentialRampToValueAtTime(0.001, ts+0.28);
-      o.start(ts); o.stop(ts+0.3);
-    }
+      o.frequency.value = n.f;
+      o.type = 'sine';
+      g.gain.setValueAtTime(0.0001, cur);
+      g.gain.linearRampToValueAtTime(0.22, cur + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, cur + n.d);
+      o.start(cur);
+      o.stop(cur + n.d + 0.02);
+      cur += n.d + n.gap;
+    });
   } catch(e){}
 }
 
@@ -3055,18 +4389,169 @@ export function vibrateAlarm(){
   if(navigator.vibrate){ try { navigator.vibrate(arr); } catch(e){} }
 }
 
-export function sendSystemNotification(t, b){
+export async function sendSystemNotification(title, body, options){
+  options = options || {};
   if(!('Notification' in window) || Notification.permission !== 'granted') return;
-  try { new Notification(t, { body: b, tag: 'lesson-reminder' }); } catch(e){}
+  var isSilent = !!options.silent;
+  var notifOpts = {
+    body: body || '',
+    icon: './icon.svg',
+    badge: './icon.svg',
+    tag: options.tag || 'lesson-reminder',
+    silent: isSilent,
+    data: options.data || {}
+  };
+  if (!isSilent && data.settings.notifVibrate !== false) {
+    var vp = data.settings.notifVibratePattern || 'short';
+    if (vp !== 'off') {
+      notifOpts.vibrate = vp === 'long' ? [300,150,300,150,300] : [200,100,200];
+    }
+  }
+  try {
+    if ('serviceWorker' in navigator) {
+      var reg = await navigator.serviceWorker.getRegistration();
+      if (reg && typeof reg.showNotification === 'function') {
+        await reg.showNotification(title, notifOpts);
+        return;
+      }
+    }
+  } catch(e) {}
+  try { new Notification(title, notifOpts); } catch(e){}
+}
+
+export function updateNotifPermStatus(){
+  var badge = document.getElementById('notifPermStatus');
+  if(!badge) return;
+  badge.className = 'cfg-badge';
+  if(!('Notification' in window)){
+    badge.textContent = 'غير مدعومة';
+    badge.classList.add('amber');
+    return;
+  }
+  var p = Notification.permission;
+  if(p === 'granted'){
+    badge.textContent = 'مفعّلة';
+    badge.classList.add('green');
+  } else if(p === 'denied'){
+    badge.textContent = 'مرفوضة من المتصفح';
+    badge.classList.add('red');
+  } else {
+    badge.textContent = 'غير مفعّلة';
+    badge.classList.add('blue');
+  }
 }
 
 export function requestNotifPermission(){
-  if(!('Notification' in window)){ showNotify('المتصفح لا يدعم'); return; }
-  if(Notification.permission === 'granted'){ showNotify('مفعّلة بالفعل'); return; }
+  if(!('Notification' in window)){
+    updateNotifPermStatus();
+    showNotify('المتصفح لا يدعم إشعارات النظام');
+    return;
+  }
+  if(Notification.permission === 'granted'){
+    updateNotifPermStatus();
+    showNotify('مفعّلة بالفعل');
+    return;
+  }
   Notification.requestPermission().then(function(p){
+    updateNotifPermStatus();
     if(p === 'granted') showNotify('تم تفعيل الإشعارات');
     else showNotify('تم رفض الإشعارات');
   });
+}
+
+export async function testSystemNotification(){
+  if(!('Notification' in window)){
+    updateNotifPermStatus();
+    showNotify('المتصفح لا يدعم إشعارات النظام');
+    return;
+  }
+  if(Notification.permission === 'default'){
+    var perm = await Notification.requestPermission();
+    updateNotifPermStatus();
+    if(perm !== 'granted'){
+      showNotify('يرجى السماح بالإشعارات أولاً');
+      return;
+    }
+  } else if(Notification.permission !== 'granted'){
+    updateNotifPermStatus();
+    showNotify('الإشعارات مرفوضة من إعدادات المتصفح');
+    return;
+  }
+  await sendSystemNotification('تجربة إشعار Teacher Assistant', 'إشعارات النظام تعمل بنجاح', {
+    silent: false,
+    tag: 'test-notif',
+    data: {}
+  });
+  showNotify('تم إرسال إشعار تجريبي');
+}
+
+export function formatReminderOffset(mins){
+  var d = parseInt(mins, 10);
+  if (!d || d <= 0) return '0 دقيقة';
+  var h = Math.floor(d / 60), m = d % 60;
+  var parts = [];
+  if (h > 0) {
+    if (h === 1) parts.push('ساعة');
+    else if (h === 2) parts.push('ساعتان');
+    else if (h >= 3 && h <= 10) parts.push(h + ' ساعات');
+    else parts.push(h + ' ساعة');
+  }
+  if (m > 0) parts.push(m + ' دقيقة');
+  return parts.join(' و ');
+}
+
+export function renderNotifRemindersSettings(){
+  var el = document.getElementById('notifRemindersList');
+  if (!el) return;
+  var list = Array.isArray(data.settings.notifReminders) ? data.settings.notifReminders : [];
+  if (!list.length) {
+    el.innerHTML = '<span style="font-size:.78rem;color:var(--text-muted)">لا توجد تنبيهات مضافة قبل الحصة</span>';
+    return;
+  }
+  el.innerHTML = list.map(function(mins){
+    return '<span class="notif-reminder-chip">'
+      + '<span>قبل الحصة بـ ' + escapeHtml(formatReminderOffset(mins)) + '</span>'
+      + '<button type="button" onclick="removeNotifReminder(' + parseInt(mins, 10) + ')" title="حذف" aria-label="حذف">×</button>'
+      + '</span>';
+  }).join('');
+}
+
+export function addNotifReminder(){
+  var valEl = document.getElementById('newNotifReminderVal');
+  var unitEl = document.getElementById('newNotifReminderUnit');
+  var v = parseInt(valEl ? valEl.value : '', 10);
+  var unit = parseInt(unitEl ? unitEl.value : '1', 10) || 1;
+  if (isNaN(v) || v < 1) {
+    showNotify('أدخل مدة صحيحة');
+    return;
+  }
+  var mins = v * unit;
+  if (mins < 1 || mins > 1440) {
+    showNotify('المدة يجب أن تكون بين 1 دقيقة و 24 ساعة');
+    return;
+  }
+  if (!Array.isArray(data.settings.notifReminders)) data.settings.notifReminders = [];
+  if (data.settings.notifReminders.indexOf(mins) !== -1) {
+    showNotify('هذا التنبيه مضاف بالفعل');
+    return;
+  }
+  data.settings.notifReminders.push(mins);
+  data.settings.notifReminders.sort(function(a, b){ return b - a; });
+  if (valEl) valEl.value = '';
+  saveData();
+  renderNotifRemindersSettings();
+  checkUpcomingReminder();
+  showNotify('✅ تمت إضافة التنبيه');
+}
+
+export function removeNotifReminder(mins){
+  mins = parseInt(mins, 10);
+  if (!Array.isArray(data.settings.notifReminders)) data.settings.notifReminders = [];
+  data.settings.notifReminders = data.settings.notifReminders.filter(function(m){ return parseInt(m, 10) !== mins; });
+  saveData();
+  renderNotifRemindersSettings();
+  checkUpcomingReminder();
+  showNotify('تم حذف التنبيه');
 }
 
 export function testAlarmSound(){
@@ -3091,7 +4576,12 @@ export function startRepeatBeep(){
   if(_repeatBeepInterval) clearInterval(_repeatBeepInterval);
   var iv = Math.max(10, (data.settings.notifRepeatInterval || 30)) * 1000;
   _repeatBeepInterval = setInterval(function(){
-    if(!currentReminderInfo){ clearInterval(_repeatBeepInterval); _repeatBeepInterval = null; return; }
+    var hasAlerts = _activeBellData && _activeBellData.lessonAlerts && _activeBellData.lessonAlerts.length > 0;
+    if(!hasAlerts || data.settings.notifEnabled === false){
+      clearInterval(_repeatBeepInterval);
+      _repeatBeepInterval = null;
+      return;
+    }
     if(!isInQuietHours()){ playAlarmBeep(); vibrateAlarm(); }
   }, iv);
 }
@@ -3100,104 +4590,333 @@ export function stopRepeatBeep(){
   if(_repeatBeepInterval){ clearInterval(_repeatBeepInterval); _repeatBeepInterval = null; }
 }
 
-export function triggerLessonAlarm(lesson){
-  var evs = [];
-  if(lesson.diffMin <= 5 && lesson.diffMin > 0) evs.push('approaching');
-  if(lesson.diffMin <= 0 && lesson.diffMin > -1) evs.push('starting');
-  if(lesson.diffMin <= -5 && lesson.diffMin > -6) evs.push('late');
-  evs.forEach(function(ev){
-    var k = lesson.key + '|' + ev;
-    if(alarmBeepedEvents[k]) return;
-    alarmBeepedEvents[k] = true;
-    if(!isInQuietHours()){
-      if(data.settings.notifSound !== false) playAlarmBeep();
-      if(data.settings.notifVibrate !== false) vibrateAlarm();
-    }
-    if(data.settings.notifSystem) sendSystemNotification('تذكير بحصة', lesson.groupName + ' — ' + lesson.time);
-    if(data.settings.notifRepeat) startRepeatBeep();
-  });
-}
-
 export function saveNotificationSettings(){
-  data.settings.notifEnabled = document.getElementById('notifEnabled').checked;
-  data.settings.notifMinutes = parseInt(document.getElementById('notifMinutes').value) || 15;
-  data.settings.notifSound = document.getElementById('notifSound').checked;
-  data.settings.notifVibrate = document.getElementById('notifVibrate').checked;
-  data.settings.notifSystem = document.getElementById('notifSystem').checked;
+  var ncBeforeEl = document.getElementById('nowCardBeforeMin');
+  var ncAfterEl = document.getElementById('nowCardAfterMin');
+  var nBefore = parseInt(ncBeforeEl ? ncBeforeEl.value : '30', 10);
+  var nAfter = parseInt(ncAfterEl ? ncAfterEl.value : '60', 10);
+  data.settings.nowCardBeforeMin = (!isNaN(nBefore) && nBefore >= 0 && nBefore <= 240) ? nBefore : 30;
+  data.settings.nowCardAfterMin = (!isNaN(nAfter) && nAfter >= 5 && nAfter <= 240) ? nAfter : 60;
+
+  var ne = document.getElementById('notifEnabled');
+  if(ne) data.settings.notifEnabled = ne.checked;
+  var nas = document.getElementById('notifAtStart');
+  if(nas) data.settings.notifAtStart = nas.checked;
+  var nmre = document.getElementById('notifMissingReportEnabled');
+  if(nmre) data.settings.notifMissingReportEnabled = nmre.checked;
+  var nmra = document.getElementById('notifMissingReportAfter');
+  var missAfterVal = parseInt(nmra ? nmra.value : '60', 10);
+  data.settings.notifMissingReportAfter = (!isNaN(missAfterVal) && missAfterVal >= 5 && missAfterVal <= 720) ? missAfterVal : 60;
+
+  var ns = document.getElementById('notifSound'); if(ns) data.settings.notifSound = ns.checked;
+  var nv = document.getElementById('notifVibrate'); if(nv) data.settings.notifVibrate = nv.checked;
+  var nsys = document.getElementById('notifSystem'); if(nsys) data.settings.notifSystem = nsys.checked;
   var st = document.getElementById('notifSoundType'); if(st) data.settings.notifSoundType = st.value;
   var rp = document.getElementById('notifRepeat'); if(rp) data.settings.notifRepeat = rp.checked;
-  var ri = document.getElementById('notifRepeatInterval'); if(ri) data.settings.notifRepeatInterval = parseInt(ri.value) || 30;
+  var ri = document.getElementById('notifRepeatInterval'); if(ri) data.settings.notifRepeatInterval = parseInt(ri.value, 10) || 30;
   var vp = document.getElementById('notifVibratePattern'); if(vp) data.settings.notifVibratePattern = vp.value;
   var qe = document.getElementById('quietEnabled'); if(qe) data.settings.quietEnabled = qe.checked;
   var qf = document.getElementById('quietFrom'); if(qf) data.settings.quietFrom = qf.value || '23:00';
   var qt = document.getElementById('quietTo'); if(qt) data.settings.quietTo = qt.value || '07:00';
+
   saveData();
   showNotify('تم الحفظ');
+  if (document.getElementById('tab-home') && document.getElementById('tab-home').classList.contains('active')) {
+    renderHome();
+  }
   checkUpcomingReminder();
 }
 
-export function getUpcomingLessons(within){
-  var res = [];
+export function collectActiveNotifications(){
+  var lessonAlerts = [];
+  var missingReports = [];
   var now = new Date();
-  var th = within + 120;
-  var days = Math.ceil(th / 1440) + 1;
+  var nowMs = now.getTime();
   var dayNames = window.DAY_NAMES || ['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
-  for(var d=0; d<days; d++){
-    var day = new Date(now); day.setDate(day.getDate() + d); day.setHours(0,0,0,0);
+  var reminders = Array.isArray(data.settings.notifReminders) ? data.settings.notifReminders : [];
+  var maxPre = reminders.length ? Math.max.apply(null, reminders) : 0;
+  var atStart = data.settings.notifAtStart !== false;
+
+  for (var d = 0; d <= 1; d++) {
+    var day = new Date(now);
+    day.setDate(day.getDate() + d);
+    day.setHours(0, 0, 0, 0);
     var di = toDateISO(day);
     var occs = getOccurrencesForDate(day);
     occs.forEach(function(o){
-      if(o.status === 'cancelled' || o.status === 'completed') return;
-      var p = o.time.split(':').map(Number);
-      var lt = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p[0], p[1], 0);
-      var dm = Math.round((lt - now) / 60000);
-      if(dm >= -60 && dm <= within){
-        res.push({ key: o.groupId + '_' + di + '_' + o.time, diffMin: dm, groupId: o.groupId, groupName: o.groupName, time: o.time, dateISO: di, dateDisplay: day.getDate() + '/' + (day.getMonth()+1), dayName: dayNames[day.getDay()], status: o.status });
+      if (o.status !== 'upcoming' && o.status !== 'pending') return;
+      var p = (o.time || '00:00').split(':').map(Number);
+      var lessonStart = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p[0] || 0, p[1] || 0, 0);
+      var diffMin = (lessonStart.getTime() - nowMs) / 60000;
+      var occKey = o.groupId + '_' + di + '_' + o.time;
+      if ((dismissedReminders[occKey] || 0) > nowMs) return;
+      var inPre = reminders.length > 0 && diffMin <= maxPre && diffMin >= -60;
+      var inAtStart = atStart && diffMin <= 0 && diffMin >= -60;
+      if (inPre || inAtStart) {
+        var grp = data.groups.find(function(x){ return x.id === o.groupId; });
+        lessonAlerts.push({
+          key: occKey,
+          diffMin: diffMin,
+          groupId: o.groupId,
+          groupName: o.groupName,
+          link: (grp && grp.link) ? grp.link.trim() : '',
+          time: o.time,
+          dateISO: di,
+          dateDisplay: day.getDate() + '/' + (day.getMonth() + 1),
+          dayName: dayNames[day.getDay()],
+          status: o.status
+        });
       }
     });
   }
-  res.sort(function(a,b){ return a.diffMin - b.diffMin; });
-  return res;
+  lessonAlerts.sort(function(a, b){ return a.diffMin - b.diffMin; });
+
+  if (data.settings.notifMissingReportEnabled !== false) {
+    var missingAfter = parseInt(data.settings.notifMissingReportAfter, 10);
+    if (isNaN(missingAfter) || missingAfter < 5) missingAfter = 60;
+    var seenMissing = {};
+    for (var pd = 0; pd < 7; pd++) {
+      var pDay = new Date(now);
+      pDay.setDate(pDay.getDate() - pd);
+      pDay.setHours(0, 0, 0, 0);
+      var pIso = toDateISO(pDay);
+      var pOccs = getOccurrencesForDate(pDay);
+      pOccs.forEach(function(o){
+        if (o.status !== 'pending' && o.status !== 'upcoming') return;
+        var p = (o.time || '00:00').split(':').map(Number);
+        var lessonStart = new Date(pDay.getFullYear(), pDay.getMonth(), pDay.getDate(), p[0] || 0, p[1] || 0, 0);
+        var minsSinceStart = (nowMs - lessonStart.getTime()) / 60000;
+        if (minsSinceStart < missingAfter) return;
+        var occKey = o.groupId + '_' + pIso + '_' + o.time;
+        if (seenMissing[occKey]) return;
+        if ((dismissedReminders['rep_' + occKey] || 0) > nowMs) return;
+        seenMissing[occKey] = true;
+        missingReports.push({
+          key: occKey,
+          minsSinceStart: Math.round(minsSinceStart),
+          groupId: o.groupId,
+          groupName: o.groupName,
+          time: o.time,
+          dateISO: pIso,
+          dateDisplay: pDay.getDate() + '/' + (pDay.getMonth() + 1),
+          dayName: dayNames[pDay.getDay()],
+          status: o.status
+        });
+      });
+    }
+    missingReports.sort(function(a, b){
+      var cmp = b.dateISO.localeCompare(a.dateISO);
+      if (cmp !== 0) return cmp;
+      return b.time.localeCompare(a.time);
+    });
+  }
+
+  return { lessonAlerts: lessonAlerts, missingReports: missingReports };
+}
+
+export function updateBellBadges(){
+  var dataAlerts = _activeBellData || { lessonAlerts: [], missingReports: [] };
+  var total = dataAlerts.lessonAlerts.length + dataAlerts.missingReports.length;
+  var hasUrgent = dataAlerts.lessonAlerts.length > 0;
+  ['homeBellBadge', 'appBellBadge'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (total > 0) {
+      el.textContent = total > 99 ? '99+' : String(total);
+      el.style.display = 'flex';
+      el.classList.toggle('urgent', hasUrgent);
+    } else {
+      el.style.display = 'none';
+      el.classList.remove('urgent');
+    }
+  });
+}
+
+function _buildNotificationsModalBody(){
+  var dataAlerts = collectActiveNotifications();
+  _activeBellData = dataAlerts;
+  updateBellBadges();
+  var html = '';
+  if (!dataAlerts.lessonAlerts.length && !dataAlerts.missingReports.length) {
+    return '<div style="text-align:center;padding:28px 16px;color:var(--text-muted)">'
+      + '<div style="margin-bottom:10px;opacity:.65">' + svgIcon('bell-off', 30) + '</div>'
+      + '<div style="font-weight:700;font-size:.95rem;color:var(--text-primary);margin-bottom:4px">لا توجد تنبيهات حالية</div>'
+      + '<div style="font-size:.8rem">ستظهر هنا الحصص القريبة أو الجارية والتقارير المعلقة</div>'
+      + '</div>';
+  }
+
+  if (dataAlerts.lessonAlerts.length) {
+    html += '<div class="notif-center-section-title">' + svgIcon('bell', 14) + ' الحصص القريبة والجارية (' + dataAlerts.lessonAlerts.length + ')</div>';
+    dataAlerts.lessonAlerts.forEach(function(item){
+      var dm = Math.round(item.diffMin);
+      var whenTxt = dm > 0 ? ('تبدأ بعد ' + dm + ' دقيقة') : (dm === 0 ? 'تبدأ الآن' : ('جارية منذ ' + Math.abs(dm) + ' دقيقة'));
+      var linkBtn = item.link
+        ? '<button type="button" class="btn btn-secondary btn-sm" onclick="stopRepeatBeep();closeGenericModal();openLessonLink(\'' + escapeAttr(item.link) + '\')">' + svgIcon('external-link', 12) + ' دخول الرابط</button>'
+        : '';
+      html += '<div class="notif-center-item urgent">'
+        + '<div class="notif-center-head">'
+        + '<div><div class="notif-center-title">' + escapeHtml(item.groupName) + '</div>'
+        + '<div class="notif-center-meta">' + svgIcon('clock', 12) + ' <span>' + escapeHtml(formatTimeDisplay(item.time)) + '</span> • <span>' + escapeHtml(whenTxt) + '</span></div></div>'
+        + '<span class="cfg-badge amber">' + escapeHtml(item.dayName + ' ' + item.dateDisplay) + '</span>'
+        + '</div>'
+        + '<div class="notif-center-actions">'
+        + '<button type="button" class="btn btn-primary btn-sm" style="width:auto;margin:0" onclick="stopRepeatBeep();closeGenericModal();startLessonFromCalendar(\'' + escapeAttr(item.groupId) + '\',\'' + escapeAttr(item.dateISO) + '\',\'' + escapeAttr(item.time) + '\')">' + svgIcon('play', 12) + ' فتح الحصة</button>'
+        + linkBtn
+        + '<button type="button" class="btn btn-secondary btn-sm" onclick="snoozeNotification(\'' + escapeAttr(item.key) + '\')">' + svgIcon('clock', 12) + ' غفوة 5 د</button>'
+        + '<button type="button" class="btn btn-secondary btn-sm" onclick="dismissNotificationItem(\'' + escapeAttr(item.key) + '\')">تجاهل</button>'
+        + '</div></div>';
+    });
+  }
+
+  if (dataAlerts.missingReports.length) {
+    html += '<div class="notif-center-section-title" style="color:var(--text-secondary)">' + svgIcon('file-text', 14) + ' حصص بدون تقرير — صامت (' + dataAlerts.missingReports.length + ')</div>';
+    dataAlerts.missingReports.forEach(function(item){
+      html += '<div class="notif-center-item silent-report">'
+        + '<div class="notif-center-head">'
+        + '<div><div class="notif-center-title">' + escapeHtml(item.groupName) + '</div>'
+        + '<div class="notif-center-meta">' + svgIcon('calendar', 12) + ' <span>' + escapeHtml(item.dayName + ' ' + item.dateDisplay) + '</span> • ' + svgIcon('clock', 12) + ' <span>' + escapeHtml(formatTimeDisplay(item.time)) + '</span></div></div>'
+        + '<span class="cfg-badge blue">بدون تقرير</span>'
+        + '</div>'
+        + '<div class="notif-center-actions">'
+        + '<button type="button" class="btn btn-primary btn-sm" style="width:auto;margin:0" onclick="closeGenericModal();startLessonFromCalendar(\'' + escapeAttr(item.groupId) + '\',\'' + escapeAttr(item.dateISO) + '\',\'' + escapeAttr(item.time) + '\')">' + svgIcon('file-text', 12) + ' تسجيل التقرير</button>'
+        + '<button type="button" class="btn btn-secondary btn-sm" onclick="dismissNotificationItem(\'rep_' + escapeAttr(item.key) + '\')">تجاهل</button>'
+        + '</div></div>';
+    });
+  }
+
+  return html;
+}
+
+export function openNotificationsModal(){
+  var bodyHtml = '<div id="notifCenterBody">' + _buildNotificationsModalBody() + '</div>';
+  var footerHtml = '<button type="button" class="btn btn-secondary" onclick="closeGenericModal()">إغلاق</button>';
+  openGenericModal(svgIcon('bell', 18) + ' التنبيهات', bodyHtml, footerHtml);
+}
+
+export function snoozeNotification(occKey){
+  stopRepeatBeep();
+  var until = Date.now() + 5 * 60 * 1000;
+  dismissedReminders[occKey] = until;
+  _snoozedNotifs[occKey] = until;
+  var box = document.getElementById('notifCenterBody');
+  if (box) box.innerHTML = _buildNotificationsModalBody();
+  else {
+    _activeBellData = collectActiveNotifications();
+    updateBellBadges();
+  }
+  showNotify('⏰ تم التأجيل 5 دقائق');
+}
+
+export function dismissNotificationItem(key){
+  if (String(key).indexOf('rep_') !== 0) {
+    stopRepeatBeep();
+    if (_snoozedNotifs[key]) delete _snoozedNotifs[key];
+  }
+  dismissedReminders[key] = Date.now() + 12 * 60 * 60 * 1000;
+  var box = document.getElementById('notifCenterBody');
+  if (box) box.innerHTML = _buildNotificationsModalBody();
+  else {
+    _activeBellData = collectActiveNotifications();
+    updateBellBadges();
+  }
+  showNotify('تم التجاهل');
 }
 
 export function checkUpcomingReminder(){
-  var bar = document.getElementById('lessonReminderBar');
-  var textEl = document.getElementById('reminderText');
-  if(!bar || !textEl) return;
-  if(!data.settings.notifEnabled){ bar.classList.remove('show'); currentReminderInfo = null; return; }
-  var nm = data.settings.notifMinutes || 15;
-  var lessons = getUpcomingLessons(nm);
-  var now = Date.now();
-  lessons = lessons.filter(function(l){ var du = dismissedReminders[l.key] || 0; return du < now; });
-  if(!lessons.length){ bar.classList.remove('show', 'urgent'); currentReminderInfo = null; return; }
-  var l = lessons[0];
-  triggerLessonAlarm(l);
-  var tt = '';
-  if(l.diffMin > 0) tt = 'بعد ' + l.diffMin + ' دقيقة';
-  else if(l.diffMin === 0) tt = 'الآن';
-  else tt = 'بدأت منذ ' + Math.abs(l.diffMin) + ' دقيقة';
-  bar.classList.toggle('urgent', l.diffMin <= 5);
-  bar.classList.add('show');
-  textEl.innerHTML = 'حصة ' + escapeHtml(l.groupName) + ' — ' + tt + '<small>' + svgIcon('calendar', 12) + ' ' + l.dayName + '، ' + l.dateDisplay + ' — ' + svgIcon('clock', 12) + ' ' + l.time + '</small>';
-  currentReminderInfo = l;
-}
+  _activeBellData = collectActiveNotifications();
+  updateBellBadges();
+  var box = document.getElementById('notifCenterBody');
+  if (box) box.innerHTML = _buildNotificationsModalBody();
 
-export function startFromReminder(){
-  if(!currentReminderInfo) return;
-  stopRepeatBeep();
-  var info = currentReminderInfo;
-  var bar = document.getElementById('lessonReminderBar'); if(bar) bar.classList.remove('show');
-  startLessonFromCalendar(info.groupId, info.dateISO, info.time);
-  currentReminderInfo = null;
-}
+  var now = new Date();
+  var nowMs = now.getTime();
+  var todayISO = toDateISO(now);
+  var yest = new Date(now);
+  yest.setDate(yest.getDate() - 1);
+  var yesterdayISO = toDateISO(yest);
 
-export function dismissReminder(){
-  if(!currentReminderInfo) return;
-  stopRepeatBeep();
-  dismissedReminders[currentReminderInfo.key] = Date.now() + 30*60*1000;
-  var bar = document.getElementById('lessonReminderBar'); if(bar) bar.classList.remove('show', 'urgent');
-  currentReminderInfo = null;
-  setTimeout(checkUpcomingReminder, 1000);
+  if (data.settings.notifEnabled !== false) {
+    var reminders = Array.isArray(data.settings.notifReminders) ? data.settings.notifReminders : [];
+    var atStart = data.settings.notifAtStart !== false;
+    for (var d = 0; d <= 1; d++) {
+      var day = new Date(now);
+      day.setDate(day.getDate() + d);
+      day.setHours(0, 0, 0, 0);
+      var di = toDateISO(day);
+      var occs = getOccurrencesForDate(day);
+      occs.forEach(function(o){
+        if (o.status !== 'upcoming' && o.status !== 'pending') return;
+        var p = (o.time || '00:00').split(':').map(Number);
+        var lt = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p[0] || 0, p[1] || 0, 0);
+        var diffMin = (lt.getTime() - nowMs) / 60000;
+        var occKey = o.groupId + '_' + di + '_' + o.time;
+        var isDismissed = (dismissedReminders[occKey] || 0) > nowMs;
+        var shouldFire = false;
+        var fireBody = o.groupName + ' — ' + formatTimeDisplay(o.time);
+
+        if (_snoozedNotifs[occKey] && nowMs >= _snoozedNotifs[occKey]) {
+          delete _snoozedNotifs[occKey];
+          dismissedReminders[occKey] = 0;
+          isDismissed = false;
+          shouldFire = true;
+        }
+
+        if (!isDismissed) {
+          reminders.forEach(function(remMin){
+            var m = parseInt(remMin, 10);
+            if (!m || m <= 0) return;
+            var win = Math.min(5, Math.max(2, m));
+            if (diffMin <= m && diffMin > m - win) {
+              var preKey = occKey + '_pre_' + m;
+              if (!_isNotifFired(preKey)) {
+                _markNotifFired(preKey);
+                shouldFire = true;
+              }
+            }
+          });
+          if (atStart && diffMin <= 0 && diffMin >= -5) {
+            var startKey = occKey + '_start';
+            if (!_isNotifFired(startKey)) {
+              _markNotifFired(startKey);
+              shouldFire = true;
+            }
+          }
+        }
+
+        if (shouldFire) {
+          if (!isInQuietHours()) {
+            if (data.settings.notifSound !== false) playAlarmBeep();
+            if (data.settings.notifVibrate !== false) vibrateAlarm();
+          }
+          if (data.settings.notifSystem) {
+            sendSystemNotification('تذكير بحصة', fireBody, {
+              silent: false,
+              tag: 'lesson-' + occKey,
+              data: { groupId: o.groupId, dateISO: di, time: o.time }
+            });
+          }
+          if (data.settings.notifRepeat) startRepeatBeep();
+          _activeBellData = collectActiveNotifications();
+          updateBellBadges();
+        }
+      });
+    }
+  }
+
+  _activeBellData.missingReports.forEach(function(item){
+    if (item.dateISO !== todayISO && item.dateISO !== yesterdayISO) return;
+    var repKey = item.key + '_missing_rep';
+    if (!_isNotifFired(repKey)) {
+      _markNotifFired(repKey);
+      if (data.settings.notifSystem) {
+        sendSystemNotification('تقرير حصة لم يُسجل', item.groupName + ' — ' + formatTimeDisplay(item.time), {
+          silent: true,
+          tag: 'missing-' + item.key,
+          data: { groupId: item.groupId, dateISO: item.dateISO, time: item.time }
+        });
+      }
+    }
+  });
 }
 
 export function startReminderInterval(){
@@ -3217,7 +4936,7 @@ export function exportICS(months){
     var sd = new Date(); sd.setHours(0,0,0,0);
     var ed = new Date(sd); ed.setMonth(ed.getMonth() + months);
     var lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Quran Reports Pro//AR','CALSCALE:GREGORIAN','METHOD:PUBLISH','X-WR-CALNAME:حصص القرآن','X-WR-TIMEZONE:' + (getTeacherTimezone() || 'UTC')];
-    var stamp = utcStamp(); var nm = data.settings.notifMinutes || 15; var cnt = 0; var cur = new Date(sd);
+    var stamp = utcStamp(); var nm = (Array.isArray(data.settings.notifReminders) && data.settings.notifReminders.length) ? data.settings.notifReminders[0] : (data.settings.notifMinutes || 15); var cnt = 0; var cur = new Date(sd);
     while(cur <= ed){
       var occs = getOccurrencesForDate(cur);
       occs.forEach(function(o){
@@ -3583,6 +5302,7 @@ export async function initApp(){
     }
     applyDesignTheme(data.settings.designTheme || 'teal');
     hydrateIcons();
+    startLiveClock();
     setupIconObserver();
     var repDate = document.getElementById('reportDate');
     if (repDate) repDate.valueAsDate = new Date();
@@ -3641,7 +5361,7 @@ export async function initApp(){
         else if(e.key === '4'){ e.preventDefault(); switchTab('library'); }
         else if(e.key === '5'){ e.preventDefault(); switchTab('settings'); }
         else if(e.key === 'n' || e.key === 'N'){ e.preventDefault(); switchTab('lesson'); }
-        else if(e.key === 'b' || e.key === 'B'){ e.preventDefault(); openInAppBrowser(); }
+        else if(e.key === 'b' || e.key === 'B'){ e.preventDefault(); openInAppBrowserWithNav(); }
         else if(e.key === 'k' || e.key === 'K'){ e.preventDefault(); switchTab('library'); switchLibSub('search'); setTimeout(function(){ var el = document.getElementById('searchInput'); if(el){ el.focus(); el.select(); } }, 100); }
         else if(e.key === ',' || e.key === '،'){ e.preventDefault(); switchTab('settings'); }
       }
@@ -3654,8 +5374,73 @@ export async function initApp(){
     setTimeout(hydrateIcons, 200);
     window.addEventListener('resize', function() { if (typeof window.hydrateIcons === 'function') window.hydrateIcons(); });
 
+    setInterval(function() {
+      if (typeof window.checkUpcomingReminder === 'function') {
+        window.checkUpcomingReminder();
+      }
+      // تحديث بطاقة "الآن" إذا كانت الصفحة الرئيسية مفتوحة
+      if (document.getElementById('tab-home') && document.getElementById('tab-home').classList.contains('active')) {
+        if (typeof window.renderHome === 'function') window.renderHome();
+      }
+    }, 30000);
+
     // التحقق من جلسة Supabase
     setTimeout(checkSession, 500);
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', function(ev){
+        if (ev.data && ev.data.type === 'OPEN_LESSON_FROM_NOTIF') {
+          var d = ev.data.data || {};
+          stopRepeatBeep();
+          if (d.groupId && d.dateISO && d.time) {
+            startLessonFromCalendar(d.groupId, d.dateISO, d.time);
+          } else {
+            openNotificationsModal();
+          }
+        }
+      });
+    }
+
+    try { history.replaceState({ appNav: true, root: true }, ''); } catch(e){}
+    window.addEventListener('popstate', function(){
+      _handlingPopState = true;
+      try {
+        var bo = document.getElementById('browserOverlay');
+        if (bo && bo.style.display === 'flex') { closeBrowser(); return; }
+        var gm = document.getElementById('genericModal');
+        if (gm && gm.classList.contains('active')) { closeGenericModal(); return; }
+        var rs = document.getElementById('reportSheet');
+        if (rs && rs.classList.contains('open')) { closeReportSheet(); return; }
+
+        var settingsTab = document.getElementById('tab-settings');
+        if (settingsTab && settingsTab.classList.contains('active') && currentSettingsSubPage) {
+          backToSettingsMenu();
+          return;
+        }
+
+        var libTab = document.getElementById('tab-library');
+        if (libTab && libTab.classList.contains('active')) {
+          if (currentViewStudentId) {
+            if (currentStudentSubPage) { backToStudentMain(); return; }
+            backFromStudentDetail();
+            return;
+          }
+          if (currentViewGroupId) {
+            if (currentGroupSubPage) { backToGroupMain(); return; }
+            backToGroups();
+            return;
+          }
+        }
+
+        var homeTab = document.getElementById('tab-home');
+        if (homeTab && !homeTab.classList.contains('active')) {
+          switchTab('home');
+          return;
+        }
+      } finally {
+        _handlingPopState = false;
+      }
+    });
 
   } catch(err){
     console.error('onload', err);
@@ -3678,6 +5463,89 @@ if (typeof document !== 'undefined') {
     initApp();
     hydrateIcons();
   }
+}
+
+export function openStudentPicker(btn){
+  var card = btn.closest('.student-card');
+  if (!card) return;
+  window._currentPickerCard = card;
+
+  var groupNameEl = document.getElementById('groupName');
+  var groupName = normalize(groupNameEl ? groupNameEl.value : '');
+  var grp = data.groups.find(function(g){ return normalize(g.name) === groupName; });
+
+  if (!grp) {
+    showNotify('اختر المجموعة أولاً');
+    return;
+  }
+
+  var allStudents = data.students.filter(function(s){ return s.groupId === grp.id; });
+  if (!allStudents.length) {
+    showNotify('لا يوجد طلاب في هذه المجموعة');
+    return;
+  }
+
+  var usedNames = [];
+  document.querySelectorAll('.student-card').forEach(function(c){
+    if (c === card) return;
+    var nameInp = c.querySelector('.student-name');
+    var n = normalize(nameInp ? nameInp.value : '');
+    if (n) usedNames.push(n);
+  });
+
+  var available = allStudents.filter(function(s){
+    return usedNames.indexOf(normalize(s.name)) === -1;
+  });
+
+  if (!available.length) {
+    showNotify('كل الطلاب مضافون بالفعل — يمكنك كتابة اسم طالب جديد يدوياً');
+    return;
+  }
+
+  var body = '<p style="margin-bottom:12px;font-size:.85rem;color:var(--text-muted)">اختر طالباً من مجموعة "' + escapeHtml(grp.name) + '":</p>';
+  body += '<div style="display:flex;flex-direction:column;gap:6px">';
+  available.forEach(function(s){
+    body += '<button type="button" class="btn btn-secondary" style="justify-content:flex-start;text-align:right;padding:12px" data-student-name="' + escapeAttr(s.name) + '" onclick="applyStudentPick(this.dataset.studentName)">'
+      + '<div style="display:flex;align-items:center;gap:8px">'
+      + svgIcon('user', 14) + ' '
+      + escapeHtml(s.name)
+      + '</div></button>';
+  });
+  body += '</div>';
+
+  openGenericModal('اختيار طالب', body, '<button class="btn btn-secondary" onclick="closeGenericModal()">إلغاء</button>');
+}
+
+export function applyStudentPick(studentName){
+  var card = window._currentPickerCard;
+  if (card) {
+    var input = card.querySelector('.student-name');
+    if (input) input.value = studentName || '';
+    card._lessonRowTypes = null;
+    var groupNameEl = document.getElementById('groupName');
+    var groupName = normalize(groupNameEl ? groupNameEl.value : '');
+    var grp = data.groups.find(function(g){ return normalize(g.name) === groupName; });
+    var studentObj = grp ? data.students.find(function(s){ return s.groupId === grp.id && normalize(s.name) === normalize(studentName || ''); }) : null;
+    var gSel = card.querySelector('.student-gender');
+    if (gSel) gSel.value = (studentObj && studentObj.gender) || 'male';
+    updateStudentCardGender(card);
+    var allRows = Array.prototype.slice.call(card.querySelectorAll('.row-item'));
+    var allEmpty = !allRows.length || allRows.every(function(r){ return isRowEmpty(r); });
+    if(allEmpty){
+      var eff = getEffectiveRowTypes(studentObj, grp);
+      var sc = card.querySelector('.study-rows-container');
+      var hc = card.querySelector('.homework-rows-container');
+      if(sc) sc.innerHTML = eff.filter(function(t){ return t.section === 'study'; }).map(function(t){ return renderRow('study', t.name, t.form, eff); }).join('');
+      if(hc) hc.innerHTML = eff.filter(function(t){ return t.section === 'homework'; }).map(function(t){ return renderRow('homework', t.name, t.form, eff); }).join('');
+      hydrateIcons(card);
+    } else {
+      rebuildCardRowDropdowns(card);
+    }
+    scheduleSaveDraft();
+    renderActiveStaticTexts();
+  }
+  window._currentPickerCard = null;
+  closeGenericModal();
 }
 
 /* ═══════════════ EXPOSE ALL FUNCTIONS TO WINDOW ═══════════════ */
@@ -3761,6 +5629,9 @@ if (typeof window !== 'undefined') {
   showSaveSuccess,
   saveSession,
   shareReportWhatsApp,
+  shareReportTelegram,
+  doShareCurrentReportTelegram,
+  doShareTelegram,
   doShareCurrentReport,
   doShare,
   copyReport,
@@ -3848,17 +5719,25 @@ if (typeof window !== 'undefined') {
   vibrateAlarm,
   sendSystemNotification,
   requestNotifPermission,
+  updateNotifPermStatus,
+  testSystemNotification,
   testAlarmSound,
   isInQuietHours,
   startRepeatBeep,
   stopRepeatBeep,
-  triggerLessonAlarm,
   saveNotificationSettings,
-  getUpcomingLessons,
+  formatReminderOffset,
+  renderNotifRemindersSettings,
+  addNotifReminder,
+  removeNotifReminder,
+  collectActiveNotifications,
+  updateBellBadges,
+  openNotificationsModal,
+  snoozeNotification,
+  dismissNotificationItem,
   checkUpcomingReminder,
-  startFromReminder,
-  dismissReminder,
   startReminderInterval,
+  openLessonLink,
   padICS,
   escapeICSText,
   utcStamp,
@@ -3882,6 +5761,58 @@ if (typeof window !== 'undefined') {
   parseFolderFile,
   showKeyboardShortcuts,
   initApp,
-  normalizeUrl
+  normalizeUrl,
+  openStudentPicker,
+  applyStudentPick,
+  saveTeacherGender,
+  updateStudentCardGender,
+  getStandardRowTypes,
+  getGroupEffectiveRowTypes,
+  getEffectiveRowTypes,
+  getOwnerEffectiveRowTypes,
+  getCardEffectiveRowTypes,
+  renderOwnerRowTypes,
+  openRowTypeEditor,
+  saveOwnerRowType,
+  deleteOwnerRowType,
+  moveOwnerRowType,
+  resetOwnerRowTypes,
+  isRowEmpty,
+  rebuildCardRowDropdowns,
+  syncCardRowsWithNewTypes,
+  openQuickRowTypesModal,
+  openQuickRowInlineEditor,
+  saveQuickRowInline,
+  cancelQuickRowInline,
+  deleteQuickRowItem,
+  moveQuickRowItem,
+  resetQuickRowList,
+  applyQuickRowTypes,
+  generateReminderText,
+  openReminderModal,
+  copyReminderText,
+  shareReminderWhatsApp,
+  doSharePendingReminderWhatsApp,
+  shareReminderTelegram,
+  doSharePendingReminderTelegram,
+  updateLiveClock,
+  saveTimeFormat,
+  backToSettingsMenu,
+  switchSettingsSub,
+  openGroupSubPage,
+  backToGroupMain,
+  openStudentSubPage,
+  backToStudentMain,
+  pushAppNavState,
+  openInAppBrowser: openInAppBrowserWithNav,
+  setCurrentLessonContext,
+  saveGeminiApiKey,
+  testGeminiKeyFromSettings,
+  clearTransCacheFromSettings,
+  switchReminderLang,
+  generateReminderTextAsync,
+  generateReport,
+  generateMonthlyDraftFromTab,
+  generateAndOpenMonthlyDraft
   });
 }

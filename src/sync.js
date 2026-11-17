@@ -2,8 +2,8 @@
    src/sync.js — إدارة المزامنة السحابية والمصادقة (Supabase)
    ═══════════════════════════════════════════════════════════ */
 
-import { showNotify, deepClone, escapeHtml } from './utils.js';
-import { idbSet, idbGet } from './idb.js';
+import { showNotify, deepClone, escapeHtml, normalize } from './utils.js';
+import { idbSet, idbGet, _idb } from './idb.js';
 import {
   data,
   setData,
@@ -228,23 +228,40 @@ export function convertRemoteToLocal(table, remote) {
       guardianName: remote.guardian_name || '',
       birthDate: remote.birth_date || '',
       currentLevel: remote.current_level || '',
+      gender: remote.gender || 'male',
       constants: remote.constants || [],
       staticTexts: remote.static_texts || [],
+      reportSettings: remote.report_settings || {},
       notes: remote.notes || '',
       updated_at: remote.updated_at
     };
   }
   if (table === 'sessions') {
+    var sData = remote.data || {};
+    var ctx = (sData && sData.lessonContext) ? sData.lessonContext : null;
+    var rIds = Array.isArray(remote.student_ids) ? remote.student_ids : [];
+    if ((!rIds || !rIds.length) && Array.isArray(sData.students)) {
+      rIds = [];
+      sData.students.forEach(function(st){
+        var nm = normalize(st.name || '');
+        if (!nm) return;
+        var found = (data.students || []).find(function(x){ return x.groupId === remote.group_id && normalize(x.name) === nm; });
+        if (found && rIds.indexOf(found.id) === -1) rIds.push(found.id);
+      });
+    }
     return {
       id: remote.id,
       groupId: remote.group_id,
-      studentIds: remote.student_ids || [],
+      studentIds: rIds,
       date: remote.date || '',
+      time: remote.time || (ctx && ctx.time) || '',
+      ruleId: remote.rule_id || (ctx && ctx.ruleId) || null,
+      extraId: remote.extra_id || (ctx && ctx.extraId) || null,
       lessonNumber: remote.lesson_number || '',
       duration: remote.duration || 0,
       subject: remote.subject || 'quran',
       report: remote.report || '',
-      data: remote.data || {},
+      data: sData,
       attachmentIds: remote.attachment_ids || [],
       savedAt: remote.saved_at,
       updated_at: remote.updated_at
@@ -260,6 +277,7 @@ export function convertRemoteToLocal(table, remote) {
       time: remote.time || '',
       ruleId: cleanRuleId || null,
       type: remote.type,
+      studentIds: Array.isArray(remote.student_ids) ? remote.student_ids : null,
       updated_at: remote.updated_at
     };
   }
@@ -280,31 +298,28 @@ export function convertRemoteToLocal(table, remote) {
 
 export function refreshUIIfNeeded(table) {
   try {
-    if (typeof window.renderHome === 'function' && document.getElementById('tab-home')?.classList.contains('active')) window.renderHome();
-    if (typeof window.renderCalendar === 'function' && document.getElementById('tab-calendar')?.classList.contains('active')) window.renderCalendar();
+    // إذا كان التغيير في appointments أو sessions، نحدّث التقويم والرئيسية دائماً (لأنهما يعتمدان على الحصص)
+    var isCalendarChange = (table === 'appointments' || table === 'sessions');
+    
+    if (isCalendarChange || (typeof window.renderHome === 'function' && document.getElementById('tab-home')?.classList.contains('active'))) {
+      if (typeof window.renderHome === 'function') window.renderHome();
+    }
+    if (isCalendarChange || (typeof window.renderCalendar === 'function' && document.getElementById('tab-calendar')?.classList.contains('active'))) {
+      if (typeof window.renderCalendar === 'function') window.renderCalendar();
+    }
     if (typeof window.renderGroupsList === 'function' && document.getElementById('tab-library')?.classList.contains('active')) {
       window.renderGroupsList();
       if (typeof window.renderStudentsList === 'function') window.renderStudentsList();
-      
-      // تحديث الشاشات المفتوحة (تفاصيل مجموعة أو طالب)
       if (window.currentViewGroupId && typeof window.openGroupDetail === 'function') {
-        if (data.groups.find(g => g.id === window.currentViewGroupId)) {
-          window.openGroupDetail(window.currentViewGroupId);
-        } else {
-          if (typeof window.backToGroups === 'function') window.backToGroups();
-        }
+        if (data.groups.find(g => g.id === window.currentViewGroupId)) window.openGroupDetail(window.currentViewGroupId);
+        else if (typeof window.backToGroups === 'function') window.backToGroups();
       }
       if (window.currentViewStudentId && typeof window.openStudentDetail === 'function') {
-        if (data.students.find(s => s.id === window.currentViewStudentId)) {
-          window.openStudentDetail(window.currentViewStudentId, window.studentBackTarget);
-        } else {
-          if (typeof window.backToStudents === 'function') window.backToStudents();
-        }
+        if (data.students.find(s => s.id === window.currentViewStudentId)) window.openStudentDetail(window.currentViewStudentId, window.studentBackTarget);
+        else if (typeof window.backToStudents === 'function') window.backToStudents();
       }
     }
-  } catch (e) {
-    console.warn('refreshUIIfNeeded:', e);
-  }
+  } catch (e) { console.warn('refreshUIIfNeeded:', e); }
 }
 
 export function teardownRealtimeSync() {
@@ -319,22 +334,30 @@ export function teardownRealtimeSync() {
 // ═══════════════ AUTO-SYNC INFRASTRUCTURE ═══════════════
 var _syncDebounceTimer = null;
 var _syncing = false;
+var _pendingSync = false;
 
 export function scheduleAutoSync(){
-  if (!currentUser) return;             // غير مسجل → لا مزامنة
+  if (!currentUser) return;
   if (_syncDebounceTimer) clearTimeout(_syncDebounceTimer);
   _syncDebounceTimer = setTimeout(async function(){
-    if (_syncing) return;
+    if (_syncing) {
+      _pendingSync = true;
+      return;
+    }
     if (!currentUser) return;
     _syncing = true;
     try {
-      await uploadToCloud(true);        // صامت
+      await uploadToCloud(true);
     } catch(e){
       console.warn('Auto-sync failed:', e);
     } finally {
       _syncing = false;
+      if (_pendingSync) {
+        _pendingSync = false;
+        scheduleAutoSync();
+      }
     }
-  }, 3000);                              // ٣ ثوانٍ debounce
+  }, 1500); // تم تقليل التأخير من 3000 إلى 1500
 }
 
 // ═══════════════ AUTHENTICATION LOGIC ═══════════════
@@ -346,6 +369,7 @@ export function showAuthOverlay() {
 export function skipAuth() {
   var overlay = document.getElementById('authOverlay');
   if (overlay) overlay.style.display = 'none';
+  localStorage.setItem('quran_skip_auth', 'true');
   showNotify('يعمل التطبيق محلياً. لن تتم المزامنة.');
 }
 
@@ -375,6 +399,7 @@ export async function handleAuth(action) {
   btnToLoad.disabled = true;
 
   try {
+    localStorage.removeItem('quran_skip_auth');
     var result;
     if (action === 'login') {
       result = await supabaseClient.auth.signInWithPassword({ email: email, password: password });
@@ -395,7 +420,13 @@ export async function handleAuth(action) {
     // ═══ حالة: نجاح الدخول أو إنشاء حساب بجلسة ═══
     showNotify('✅ تم تسجيل الدخول بنجاح');
     document.getElementById('authOverlay').style.display = 'none';
-    await getCurrentUser();
+    var user = await getCurrentUser();
+    var lastUserId = localStorage.getItem('quran_last_user_id');
+    if (lastUserId && user && lastUserId !== user.id) {
+      console.log('🔄 مستخدم مختلف — جاري مسح البيانات القديمة');
+      await clearLocalData();
+    }
+    if (user) localStorage.setItem('quran_last_user_id', user.id);
     setupRealtimeSync();
     
     // سحب البيانات إذا كان الجهاز فارغاً، وتحديث الواجهة
@@ -438,11 +469,20 @@ export async function handleAuth(action) {
 // ═══ فحص الجلسة (النسخة النهائية مع setupRealtimeSync — Fix 2) ═══
 export async function checkSession() {
   if (!supabaseClient) return;
+  if (localStorage.getItem('quran_skip_auth') === 'true') {
+    console.log('وضع محلي — تخطي شاشة الدخول');
+    return;
+  }
   try {
     var { data: { session } } = await supabaseClient.auth.getSession();
     if (session) {
       console.log('✅ Active session found');
-      await getCurrentUser();
+      var user = await getCurrentUser();
+      var lastUserId = localStorage.getItem('quran_last_user_id');
+      if (lastUserId && user && lastUserId !== user.id) {
+        await clearLocalData();
+      }
+      if (user) localStorage.setItem('quran_last_user_id', user.id);
       setupRealtimeSync();
       var overlay = document.getElementById('authOverlay');
       if (overlay) overlay.style.display = 'none';
@@ -498,7 +538,8 @@ export async function uploadToCloud(silent) {
         id: s.id, user_id: user.id, group_id: s.groupId, name: s.name, phone: s.phone || '',
         country: s.country || '', timezone: s.timezone || '', guardian_name: s.guardianName || '',
         birth_date: s.birthDate || null, current_level: s.currentLevel || '',
-        constants: s.constants || [], static_texts: s.staticTexts || [], notes: s.notes || '', is_deleted: false
+        gender: s.gender || 'male',
+        constants: s.constants || [], static_texts: s.staticTexts || [], report_settings: s.reportSettings || {}, notes: s.notes || '', is_deleted: false
       }));
       const { error } = await supabaseClient.from('students').upsert(studentsToUpload);
       if (error) throw new Error('الطلاب: ' + error.message);
@@ -509,6 +550,9 @@ export async function uploadToCloud(silent) {
     if (data.sessions.length > 0) {
       const sessionsToUpload = data.sessions.map(sess => ({
         id: sess.id, user_id: user.id, group_id: sess.groupId, date: sess.date || null,
+        student_ids: Array.isArray(sess.studentIds) ? sess.studentIds : [],
+        time: sess.time || '',
+        rule_id: sess.ruleId || null,
         lesson_number: sess.lessonNumber || '', duration: parseInt(sess.duration) || 0,
         subject: sess.subject || '', report: sess.report || '', data: sess.data || {},
         attachment_ids: sess.attachmentIds || [], is_deleted: false
@@ -530,6 +574,7 @@ export async function uploadToCloud(silent) {
           date: a.date || null,
           time: a.time || null,
           rule_id: cleanRuleId || null,
+          student_ids: (Array.isArray(a.studentIds) && a.studentIds.length) ? a.studentIds : null,
           type: a.type,
           is_deleted: false
         };
@@ -687,8 +732,10 @@ export async function downloadFromCloud(silent) {
           guardianName: s.guardian_name || '',
           birthDate: s.birth_date || '',
           currentLevel: s.current_level || '',
+          gender: s.gender || 'male',
           constants: s.constants || [],
           staticTexts: s.static_texts || [],
+          reportSettings: s.report_settings || {},
           notes: s.notes || ''
         }));
     }
@@ -696,19 +743,39 @@ export async function downloadFromCloud(silent) {
     if (sessionsData) {
       data.sessions = sessionsData
         .filter(s => notPendingDelete('sessions', s.id))
-        .map(s => ({
-          id: s.id,
-          groupId: s.group_id,
-          studentIds: [],
-          date: s.date || '',
-          lessonNumber: s.lesson_number || '',
-          duration: s.duration || 0,
-          subject: s.subject || 'quran',
-          report: s.report || '',
-          data: s.data || {},
-          attachmentIds: s.attachment_ids || [],
-          savedAt: s.saved_at
-        }));
+        .map(s => {
+          var sData = s.data || {};
+          var ctx = (sData && sData.lessonContext) ? sData.lessonContext : null;
+          return {
+            id: s.id,
+            groupId: s.group_id,
+            studentIds: Array.isArray(s.student_ids) ? s.student_ids : [],
+            date: s.date || '',
+            time: s.time || (ctx && ctx.time) || '',
+            ruleId: s.rule_id || (ctx && ctx.ruleId) || null,
+            extraId: (ctx && ctx.extraId) || null,
+            lessonNumber: s.lesson_number || '',
+            duration: s.duration || 0,
+            subject: s.subject || 'quran',
+            report: s.report || '',
+            data: sData,
+            attachmentIds: s.attachment_ids || [],
+            savedAt: s.saved_at
+          };
+        });
+
+      data.sessions.forEach(function(ses){
+        if ((!Array.isArray(ses.studentIds) || !ses.studentIds.length) && ses.data && Array.isArray(ses.data.students)) {
+          var recovered = [];
+          ses.data.students.forEach(function(st){
+            var nm = normalize(st.name || '');
+            if (!nm) return;
+            var found = (data.students || []).find(function(x){ return x.groupId === ses.groupId && normalize(x.name) === nm; });
+            if (found && recovered.indexOf(found.id) === -1) recovered.push(found.id);
+          });
+          if (recovered.length) ses.studentIds = recovered;
+        }
+      });
     }
 
     if (appointmentsData) {
@@ -723,6 +790,7 @@ export async function downloadFromCloud(silent) {
             date: a.date || '',
             time: a.time || '',
             ruleId: cleanRuleId || null,
+            studentIds: Array.isArray(a.student_ids) ? a.student_ids : null,
             type: a.type
           };
         });
@@ -813,6 +881,7 @@ export async function handleLogout() {
   if (typeof teardownRealtimeSync === 'function') teardownRealtimeSync();
   
   // مسح البيانات المحلية وإعادة التحميل
+  await clearLocalData();
   localStorage.clear();
   sessionStorage.clear();
   location.reload();
@@ -899,6 +968,26 @@ export async function cleanupOldTrash() {
   if (deletedCount > 0 && typeof saveData === 'function') saveData();
 }
 
+export async function clearLocalData() {
+  try {
+    if (_idb) {
+      var stores = ['main', 'attachments'];
+      for (var i = 0; i < stores.length; i++) {
+        await new Promise(function(resolve) {
+          var tx = _idb.transaction(stores[i], 'readwrite');
+          var req = tx.objectStore(stores[i]).clear();
+          req.onsuccess = function(){ resolve(); };
+          req.onerror = function(){ resolve(); };
+        });
+      }
+    }
+    localStorage.removeItem('quran_data_v4');
+    localStorage.removeItem('quran_last_user_id');
+    setData({ groups: [], students: [], sessions: [], monthlyReports: [], appointments: [], workSessions: [], activeTimer: null, settings: { theme: 'dark', teacherName: '', teacherTimezone: '', designTheme: 'teal' } });
+    console.log('🧹 تم مسح البيانات المحلية');
+  } catch(e) { console.warn('clearLocalData failed:', e); }
+}
+
 if (typeof window !== 'undefined') {
   Object.assign(window, {
     supabaseClient,
@@ -923,6 +1012,7 @@ if (typeof window !== 'undefined') {
     handleLogout,
     openTrashModal,
     restoreTrashItem,
-    cleanupOldTrash
+    cleanupOldTrash,
+    clearLocalData
   });
 }

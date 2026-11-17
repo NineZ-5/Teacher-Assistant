@@ -281,8 +281,20 @@ export async function loadData(){
   if(!data.settings) data.settings = {theme:'dark', teacherName:'', teacherTimezone:'', designTheme:'teal'};
   if (!data.settings.designTheme) data.settings.designTheme = (data.settings.theme === 'light') ? 'mint' : 'teal';
   if(!data.settings.teacherTimezone) data.settings.teacherTimezone = '';
+  if(!data.settings.timeFormat) data.settings.timeFormat = '12h';
+  if(!data.settings.teacherGender) data.settings.teacherGender = 'male';
+  if(typeof data.settings.geminiApiKey !== 'string') data.settings.geminiApiKey = '';
   if(typeof data.settings.notifEnabled !== 'boolean') data.settings.notifEnabled = true;
   if(!data.settings.notifMinutes) data.settings.notifMinutes = 15;
+  if(!Array.isArray(data.settings.notifReminders)){
+    var defM = parseInt(data.settings.notifMinutes, 10);
+    data.settings.notifReminders = [(!isNaN(defM) && defM > 0) ? defM : 15];
+  }
+  if(typeof data.settings.notifAtStart !== 'boolean') data.settings.notifAtStart = true;
+  if(typeof data.settings.notifMissingReportEnabled !== 'boolean') data.settings.notifMissingReportEnabled = true;
+  if(typeof data.settings.notifMissingReportAfter !== 'number') data.settings.notifMissingReportAfter = 60;
+  if(typeof data.settings.nowCardBeforeMin !== 'number') data.settings.nowCardBeforeMin = 30;
+  if(typeof data.settings.nowCardAfterMin !== 'number') data.settings.nowCardAfterMin = 60;
   if(typeof data.settings.notifSound !== 'boolean') data.settings.notifSound = true;
   if(typeof data.settings.notifVibrate !== 'boolean') data.settings.notifVibrate = true;
   if(typeof data.settings.notifSystem !== 'boolean') data.settings.notifSystem = false;
@@ -320,7 +332,15 @@ export async function loadData(){
     if(typeof s.guardianName === 'undefined') s.guardianName = '';
     if(typeof s.birthDate === 'undefined') s.birthDate = '';
     if(typeof s.currentLevel === 'undefined') s.currentLevel = '';
+    if(s.gender !== 'male' && s.gender !== 'female') s.gender = 'male';
+    if(!s.reportSettings || typeof s.reportSettings !== 'object') s.reportSettings = {};
     s.staticTexts.forEach(function(t){ if(!t.subject) t.subject = 'quran'; });
+  });
+  if(!data.sessions) data.sessions = [];
+  data.sessions.forEach(function(ses){
+    if(!Array.isArray(ses.studentIds)) ses.studentIds = [];
+    if(typeof ses.time === 'undefined') ses.time = '';
+    if(typeof ses.ruleId === 'undefined') ses.ruleId = null;
   });
   migrateScheduleRulesCreatedAt();
   window.data = data;
