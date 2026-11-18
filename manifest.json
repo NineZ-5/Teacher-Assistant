@@ -3,6 +3,7 @@
   "short_name": "Teacher Assistant",
   "description": "Teacher Assistant — تقارير احترافية للحصص، يعمل offline",
   "start_url": "./index.html",
+  "id": "/index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
@@ -10,12 +11,34 @@
   "theme_color": "#2dd4bf",
   "lang": "ar",
   "dir": "rtl",
+  "categories": ["education", "productivity"],
+  "prefer_related_applications": false,
   "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "حصة جديدة",
+      "short_name": "حصة",
+      "url": "./index.html?tab=lesson",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
