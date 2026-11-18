@@ -1,4 +1,4 @@
-const CACHE_NAME = 'quran-reports-v3.1';
+const CACHE_NAME = 'quran-reports-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -49,7 +49,9 @@ self.addEventListener('fetch', (e) => {
       }).catch(() => {
         return caches.match(e.request).then(cached => {
           if (cached) return cached;
-          if (e.request.mode === 'navigate') return caches.match('./index.html');
+          if (e.request.mode === 'navigate') {
+            return caches.match('/') || caches.match('./index.html');
+          }
         });
       })
     );
@@ -66,7 +68,9 @@ self.addEventListener('fetch', (e) => {
         }
         return res;
       }).catch(() => {
-        if (e.request.mode === 'navigate') return caches.match('./index.html');
+        if (e.request.mode === 'navigate') {
+          return caches.match('/') || caches.match('./index.html');
+        }
       });
     })
   );
