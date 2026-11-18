@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "io.github.ninez_5.twa",
+        "sha256_cert_fingerprints": ["40:BC:6A:32:BC:D4:4D:E5:23:FA:76:F5:2F:3D:60:69:E7:1C:ED:5E:B8:2F:84:F2:37:6E:4C:39:97:8A:31:04"]
+      }
+    }]
