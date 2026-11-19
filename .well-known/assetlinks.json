@@ -2,7 +2,7 @@
       "relation": ["delegate_permission/common.handle_all_urls"],
       "target": {
         "namespace": "android_app",
-        "package_name": "io.github.ninez_5.twa",
-        "sha256_cert_fingerprints": ["40:BC:6A:32:BC:D4:4D:E5:23:FA:76:F5:2F:3D:60:69:E7:1C:ED:5E:B8:2F:84:F2:37:6E:4C:39:97:8A:31:04"]
+        "package_name": "app.vercel.teacher_assistant_0526.twa",
+        "sha256_cert_fingerprints": ["6A:DF:05:3F:12:4F:EA:A2:92:58:77:45:C7:23:49:78:85:E5:D3:D2:87:EA:90:54:17:EF:80:00:1B:CC:57:B8"]
       }
     }]
