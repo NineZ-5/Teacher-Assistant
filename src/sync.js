@@ -149,11 +149,105 @@ export function deduplicateAppointments(appointments) {
   return deduplicateList(appointments, isDuplicateAppointment);
 }
 
-function persistLocalWithoutSync(contextLabel) {
-  _doSave().catch(function(err) {
-    console.warn(contextLabel + ' save failed:', err);
-  });
+function smartMergeById(localList, remoteList) {
+  var merged = Array.isArray(localList) ? localList.slice() : [];
+  for (var i = 0; i < remoteList.length; i++) {
+    var remoteItem = remoteList[i];
+    if (!remoteItem || !remoteItem.id) continue;
+    var idx = merged.findIndex(function(x) { return x && x.id === remoteItem.id; });
+    if (idx === -1) {
+      merged.push(remoteItem);
+    } else {
+      var remoteTime = getRowTimestampMs(remoteItem);
+      var localTime = getRowTimestampMs(merged[idx]);
+      if (remoteTime > localTime) {
+        merged[idx] = remoteItem;
+      }
+    }
+  }
+  return merged;
 }
+
+function smartMergeWithDeduplication(localList, remoteList, isDupFn) {
+  var merged = deduplicateList(Array.isArray(localList) ? localList.slice() : [], isDupFn);
+  for (var i = 0; i < remoteList.length; i++) {
+    var remoteItem = remoteList[i];
+    if (!remoteItem || !remoteItem.id) continue;
+
+    var remoteTime = getRowTimestampMs(remoteItem);
+    var idIdx = merged.findIndex(function(x) { return x && x.id === remoteItem.id; });
+
+    if (idIdx !== -1) {
+      var localTime = getRowTimestampMs(merged[idIdx]);
+      if (remoteTime > localTime) {
+        merged[idIdx] = remoteItem;
+      }
+      continue;
+    }
+
+    // لا يوجد تطابق بالمعرف → مطابقة منطقية ومنع التكرار
+    var dupIndices = [];
+    var maxDupTime = -1;
+    for (var j = 0; j < merged.length; j++) {
+      var item = merged[j];
+      if (item && isDupFn(item, remoteItem)) {
+        dupIndices.push(j);
+        var itemTime = getRowTimestampMs(item);
+        if (itemTime > maxDupTime) maxDupTime = itemTime;
+      }
+    }
+
+    if (dupIndices.length > 0) {
+      if (remoteTime > maxDupTime) {
+        var firstIdx = dupIndices[0];
+        var next = [];
+        for (var k = 0; k < merged.length; k++) {
+          if (dupIndices.indexOf(k) === -1) {
+            next.push(merged[k]);
+          } else if (k === firstIdx) {
+            next.push(remoteItem);
+          }
+        }
+        merged = next;
+      }
+    } else {
+      merged.push(remoteItem);
+    }
+  }
+  return deduplicateList(merged, isDupFn);
+}
+
+// ═══════════════ LIFECYCLE LISTENERS (RESUME / ONLINE) ═══════════════
+var _lifecycleListenersAdded = false;
+
+function registerSyncLifecycleListeners() {
+  if (_lifecycleListenersAdded) return;
+  _lifecycleListenersAdded = true;
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') {
+        if (typeof localStorage !== 'undefined' && localStorage.getItem('quran_skip_auth') === 'true') return;
+        if (!supabaseClient) return;
+        downloadFromCloud(true).catch(function(err) {
+          console.warn('visibilitychange sync failed:', err);
+        });
+      }
+    });
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', function() {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem('quran_skip_auth') === 'true') return;
+      if (!supabaseClient) return;
+      downloadFromCloud(true).catch(function(err) {
+        console.warn('online sync failed:', err);
+      });
+    });
+  }
+}
+
+registerSyncLifecycleListeners();
 
 // ═══════════════ REALTIME SYNC ═══════════════
 var _realtimeChannel = null;
@@ -166,6 +260,8 @@ var _lastLocalWrite = 0;  // طابع زمني لآخر إجراء محلي يد
 var SYNC_TABLES = ['groups', 'students', 'sessions', 'appointments', 'monthly_reports'];
 
 export function setupRealtimeSync() {
+  registerSyncLifecycleListeners();
+
   if (supabaseClient && typeof window !== 'undefined' && !window._authListenerAdded) {
     window._authListenerAdded = true;
     supabaseClient.auth.onAuthStateChange(function(event, session) {
@@ -189,11 +285,8 @@ export function setupRealtimeSync() {
   }
 
   if (!supabaseClient || !currentUser) return;
-  if (_realtimeChannel && _realtimeUserId === currentUser.id && (_realtimeEnabled || _realtimeSubscribing)) {
-    return;
-  }
 
-  // تفكيك أي قناة قديمة بأمان لمنع المستمعات الوهمية
+  // تفكيك أي قناة حالية قبل إنشاء قناة جديدة لمنع تكرار المستمعات
   teardownRealtimeSync();
 
   console.log('🔌 إعداد المزامنة اللحظية...');
@@ -201,7 +294,6 @@ export function setupRealtimeSync() {
   _realtimeEnabled = false;
   _realtimeUserId = currentUser.id;
 
-  // إنشاء قناة واحدة لكل الجداول مع حماية المرجع ضد القنوات المنتهية
   var channel = supabaseClient.channel('teacher-assistant-sync');
   _realtimeChannel = channel;
 
@@ -257,22 +349,38 @@ function handleRealtimeChange(table, payload) {
 
   // ─── الإدراج أو التحديث ───
   if (!newRow || !newRow.id) return;
+
+  // منع الصدى عبر مقارنة الطوابع الزمنية بدلاً من الحجب الزمني الثابت
+  if (newRow.is_deleted !== true) {
+    var localArr = getLocalArray(table);
+    if (Array.isArray(localArr)) {
+      var existingLocal = localArr.find(function(r) { return r && r.id === newRow.id; });
+      if (existingLocal && getRowTimestampMs(newRow) <= getRowTimestampMs(existingLocal)) {
+        return;
+      }
+    }
+  }
+
   upsertLocalRow(table, newRow);
 }
 
-export function removeLocalById(table, id) {
+export async function removeLocalById(table, id) {
   var arr = getLocalArray(table);
   if (!arr || !id) return;
   var before = arr.length;
   var filtered = arr.filter(function(r) { return r && r.id !== id; });
   if (filtered.length !== before) {
     setLocalArray(table, filtered);
-    persistLocalWithoutSync('removeLocalById');
+    try {
+      await _doSave();
+    } catch (err) {
+      console.warn('removeLocalById _doSave failed:', err);
+    }
     refreshUIIfNeeded(table);
   }
 }
 
-export function upsertLocalRow(table, remoteRow) {
+export async function upsertLocalRow(table, remoteRow) {
   if (!remoteRow || !remoteRow.id) return;
   var arr = getLocalArray(table);
   if (!arr) return;
@@ -284,7 +392,7 @@ export function upsertLocalRow(table, remoteRow) {
 
   // إذا كان الصف محذوفاً في السحابة، احذفه محلياً ولا تضفه
   if (remoteRow.is_deleted === true) {
-    removeLocalById(table, remoteRow.id);
+    await removeLocalById(table, remoteRow.id);
     return;
   }
 
@@ -305,11 +413,9 @@ export function upsertLocalRow(table, remoteRow) {
       nextArr[localIndex] = localCandidate;
       changed = true;
     } else {
-      // النسخة المحلية مساوية أو أحدث — تجاهل الصدى بهدوء
       return;
     }
 
-    // تنظيف أي تكرارات أخرى لنفس الموعد أو الحصة بمعرف مختلف
     if (dupFn) {
       var winnerTime = getRowTimestampMs(nextArr[localIndex]);
       var cleaned = [];
@@ -323,7 +429,6 @@ export function upsertLocalRow(table, remoteRow) {
         if (dupFn(row, localCandidate)) {
           var dupTime = getRowTimestampMs(row);
           if (dupTime > winnerTime) {
-            // إذا وُجد مكرر محلي أحدث من الوارد، أبقِ الأحدث فقط
             cleaned = cleaned.filter(function(x) { return x.id !== localCandidate.id; });
             cleaned.push(row);
             winnerTime = dupTime;
@@ -336,7 +441,6 @@ export function upsertLocalRow(table, remoteRow) {
       nextArr = cleaned;
     }
   } else if (dupFn) {
-    // البحث عن تكرار بمعرف مختلف (حصة أو موعد مطابق)
     var dupIndices = [];
     var maxDupTime = -1;
     var newestDup = null;
@@ -355,7 +459,6 @@ export function upsertLocalRow(table, remoteRow) {
 
     if (dupIndices.length > 0) {
       if (remoteTime > maxDupTime) {
-        // السحابة أحدث من النسخة المكررة المحلية → استبدال المكرر(ات) بالنسخة الأحدث
         var firstIdx = dupIndices[0];
         var replaced = [];
         for (var k = 0; k < nextArr.length; k++) {
@@ -368,7 +471,6 @@ export function upsertLocalRow(table, remoteRow) {
         nextArr = replaced;
         changed = true;
       } else {
-        // النسخة المحلية المكررة مساوية أو أحدث → احتفظ بها ونظف التكرارات الزائدة إن وجدت
         if (dupIndices.length > 1 && newestDup) {
           var deduped = [];
           var keptNewest = false;
@@ -397,7 +499,11 @@ export function upsertLocalRow(table, remoteRow) {
   if (!changed) return;
 
   setLocalArray(table, nextArr);
-  persistLocalWithoutSync('upsertLocalRow');
+  try {
+    await _doSave();
+  } catch (err) {
+    console.warn('upsertLocalRow _doSave failed:', err);
+  }
   refreshUIIfNeeded(table);
 }
 
@@ -419,7 +525,6 @@ export function setLocalArray(table, arr) {
 }
 
 export function convertRemoteToLocal(table, remote) {
-  // تحويل أسماء الحقول من snake_case إلى camelCase
   if (table === 'groups') {
     return {
       id: remote.id,
@@ -661,7 +766,6 @@ export async function handleAuth(action) {
 
     if (result.error) throw result.error;
 
-    // ═══ حالة: إنشاء حساب ناجح بدون جلسة (تأكيد البريد لا يزال مفعلاً) ═══
     if (action === 'signup' && result.data.user && !result.data.session) {
       showNotify('📧 تم إنشاء الحساب! تحقق من بريدك الإلكتروني لتأكيد الحساب.');
       errorEl.innerHTML = 'تم إنشاء الحساب ولكن يحتاج إلى تأكيد. راجع بريدك الإلكتروني.';
@@ -669,7 +773,6 @@ export async function handleAuth(action) {
       return;
     }
 
-    // ═══ حالة: نجاح الدخول أو إنشاء حساب بجلسة ═══
     showNotify('✅ تم تسجيل الدخول بنجاح');
     document.getElementById('authOverlay').style.display = 'none';
     var user = await getCurrentUser();
@@ -681,25 +784,20 @@ export async function handleAuth(action) {
     if (user) localStorage.setItem('quran_last_user_id', user.id);
     setupRealtimeSync();
 
-    // سحب البيانات إذا كان الجهاز فارغاً، وتحديث الواجهة
-    var hasLocalData = (data.groups.length > 0) || (data.students.length > 0) || (data.sessions.length > 0);
-    if (!hasLocalData) {
-      await downloadFromCloud(true);
-    }
+    await downloadFromCloud(true);
+
     if (typeof window.renderHome === 'function') window.renderHome();
     if (typeof window.renderGroupsList === 'function') window.renderGroupsList();
     if (typeof window.renderStudentsList === 'function') window.renderStudentsList();
     if (typeof window.renderCalendar === 'function') window.renderCalendar();
     if (typeof window.updatePendingBadge === 'function') window.updatePendingBadge();
 
-    // تشغيل دالة تنظيف المهملات تلقائياً
     await cleanupOldTrash();
 
   } catch (error) {
     console.error('Auth error:', error);
     var msg = error.message || 'حدث خطأ أثناء المصادقة';
 
-    // ═══ ترجمة الأخطاء الشائعة ═══
     if (msg.includes('Email not confirmed')) {
       msg = 'البريد الإلكتروني غير مؤكد. يرجى مراجعة بريدك والضغط على رابط التأكيد.';
     } else if (msg.includes('rate limit')) {
@@ -739,14 +837,8 @@ export async function checkSession() {
       var overlay = document.getElementById('authOverlay');
       if (overlay) overlay.style.display = 'none';
 
-      // تنزيل تلقائي فقط إذا كان الجهاز فارغ (تثبيت جديد)
-      var hasLocalData = (data.groups.length > 0) || (data.students.length > 0) || (data.sessions.length > 0);
-      if (!hasLocalData) {
-        console.log('جهاز فارغ — تنزيل تلقائي من السحابة...');
-        await downloadFromCloud(true);
-      } else {
-        console.log('جهازك به بيانات — لن نُعيد التنزيل تلقائياً. استخدم زر "سحب البيانات" عند الحاجة.');
-      }
+      // تنزيل ومزامنة ذكية صامتة دائماً عند فتح التطبيق بغض النظر عن وجود بيانات محلية
+      await downloadFromCloud(true);
     } else {
       showAuthOverlay();
     }
@@ -766,7 +858,6 @@ export async function uploadToCloud(silent) {
   console.log('🚀 بدء المزامنة' + (silent ? ' (صامتة)' : '') + '...');
 
   try {
-    // أولاً: فرّغ المحذوفات للسحابة (soft delete)
     await flushPendingDeletesToCloud();
     clearPendingDeletes();
     _lastLocalWrite = Date.now();
@@ -892,14 +983,34 @@ export async function uploadToCloud(silent) {
 }
 
 // ═══════════════ DOWNLOAD FROM CLOUD ═══════════════
+var _downloadInFlight = null;
+
 export async function downloadFromCloud(silent) {
   if (!supabaseClient) return false;
+  if (silent === true && _downloadInFlight) {
+    return _downloadInFlight;
+  }
+
+  var runPromise = _runDownloadFromCloud(silent);
+  if (silent === true) {
+    _downloadInFlight = runPromise;
+  }
+  try {
+    return await runPromise;
+  } finally {
+    if (_downloadInFlight === runPromise) {
+      _downloadInFlight = null;
+    }
+  }
+}
+
+async function _runDownloadFromCloud(silent) {
   const user = await getCurrentUser();
   if (!user) return false;
 
-  if (!silent) showNotify('⏳ جاري سحب البيانات من السحابة...');
+  var isSilent = silent === true;
+  if (!isSilent) showNotify('⏳ جاري سحب البيانات من السحابة...');
 
-  // حماية من بطء شبكة الهاتف (Timeout 15 ثانية)
   const fetchWithTimeout = (promise, ms) => Promise.race([
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error('انتهت مهلة الاتصال بالشبكة')), ms))
@@ -912,21 +1023,19 @@ export async function downloadFromCloud(silent) {
     );
     if (groupsErr) throw groupsErr;
 
-    // ═══ السحابة فارغة → ارفع المحلي (آمن) ═══
+    var hasLocalData = (data.groups.length > 0) || (data.students.length > 0) || (data.sessions.length > 0);
+
+    // ═══ السحابة فارغة → ارفع المحلي إن وجد ═══
     if (!groupsData || groupsData.length === 0) {
-      console.log('السحابة فارغة، سيتم رفع البيانات المحلية تلقائياً...');
-      await uploadToCloud();
+      if (hasLocalData) {
+        console.log('السحابة فارغة، سيتم رفع البيانات المحلية تلقائياً...');
+        await uploadToCloud(isSilent);
+      }
       return true;
     }
 
-    // ═══ السحابة بها بيانات → تحقق من المحلي ═══
-    var hasLocalData = (data.groups.length > 0) || (data.students.length > 0) || (data.sessions.length > 0);
-
-    if (hasLocalData) {
-      if (silent === true) {
-        console.log('تخطي التنزيل التلقائي: جهازك به بيانات. استخدم زر "سحب البيانات" عند الحاجة.');
-        return false;
-      }
+    // ═══ في السحب اليدوي فقط مع وجود بيانات محلية: خيار التأكيد + نسخة احتياطية ═══
+    if (!isSilent && hasLocalData) {
       var choice = confirm(
         '⚠️ السحابة تحتوي على بيانات، وجهازك أيضاً.\n\n' +
         '• «موافق» = استبدال البيانات المحلية ببيانات السحابة\n' +
@@ -934,11 +1043,10 @@ export async function downloadFromCloud(silent) {
         'توصية: اختر «إلغاء» إذا كان جهازك يحتوي على تعديلات حديثة.'
       );
       if (!choice) {
-        await uploadToCloud();
+        await uploadToCloud(false);
         return true;
       }
 
-      // حفظ Snapshot في IndexedDB قبل الاستبدال
       try {
         var _snapshot = deepClone(data);
         var metaStore = (typeof window !== 'undefined' && window.IDB_META_STORE) ? window.IDB_META_STORE : 'meta';
@@ -977,38 +1085,45 @@ export async function downloadFromCloud(silent) {
       return !_pendingDeletes[table] || _pendingDeletes[table].indexOf(id) === -1;
     }
 
-    if (groupsData) {
-      data.groups = groupsData
-        .filter(g => notPendingDelete('groups', g.id))
-        .map(g => convertRemoteToLocal('groups', g));
+    var remoteGroups = (groupsData || [])
+      .filter(g => notPendingDelete('groups', g.id))
+      .map(g => convertRemoteToLocal('groups', g));
+
+    var remoteStudents = (studentsData || [])
+      .filter(s => notPendingDelete('students', s.id))
+      .map(s => convertRemoteToLocal('students', s));
+
+    // تطبيق دمج المجموعات والطلاب أولاً حتى تتوفر لاستعادة studentIds في الحصص
+    if (isSilent) {
+      data.groups = smartMergeById(data.groups, remoteGroups);
+      data.students = smartMergeById(data.students, remoteStudents);
+    } else {
+      data.groups = remoteGroups;
+      data.students = remoteStudents;
     }
 
-    if (studentsData) {
-      data.students = studentsData
-        .filter(s => notPendingDelete('students', s.id))
-        .map(s => convertRemoteToLocal('students', s));
-    }
+    var remoteSessions = (sessionsData || [])
+      .filter(s => notPendingDelete('sessions', s.id))
+      .map(s => convertRemoteToLocal('sessions', s));
 
-    if (sessionsData) {
-      var mappedSessions = sessionsData
-        .filter(s => notPendingDelete('sessions', s.id))
-        .map(s => convertRemoteToLocal('sessions', s));
+    var remoteAppointments = (appointmentsData || [])
+      .filter(a => notPendingDelete('appointments', a.id))
+      .map(a => convertRemoteToLocal('appointments', a));
 
-      data.sessions = deduplicateSessions(mappedSessions);
-    }
+    var remoteReports = (reportsData || [])
+      .filter(r => notPendingDelete('monthly_reports', r.id))
+      .map(r => convertRemoteToLocal('monthly_reports', r));
 
-    if (appointmentsData) {
-      var mappedAppts = appointmentsData
-        .filter(a => notPendingDelete('appointments', a.id))
-        .map(a => convertRemoteToLocal('appointments', a));
-
-      data.appointments = deduplicateAppointments(mappedAppts);
-    }
-
-    if (reportsData) {
-      data.monthlyReports = reportsData
-        .filter(r => notPendingDelete('monthly_reports', r.id))
-        .map(r => convertRemoteToLocal('monthly_reports', r));
+    if (isSilent) {
+      // دمج صامت غير هدّام مع منع التكرار
+      data.sessions = smartMergeWithDeduplication(data.sessions, remoteSessions, isDuplicateSession);
+      data.appointments = smartMergeWithDeduplication(data.appointments, remoteAppointments, isDuplicateAppointment);
+      data.monthlyReports = smartMergeById(data.monthlyReports, remoteReports);
+    } else {
+      // استبدال يدوي كامل مع تطبيق نفس منطق منع التكرار
+      data.sessions = deduplicateSessions(remoteSessions);
+      data.appointments = deduplicateAppointments(remoteAppointments);
+      data.monthlyReports = remoteReports;
     }
 
     // 6. سحب الإعدادات (Settings)
@@ -1032,20 +1147,21 @@ export async function downloadFromCloud(silent) {
     }
 
     await _doSave();
+
     if (typeof window !== 'undefined') {
-      if (typeof window.renderHome === 'function') window.renderHome();
-      if (typeof window.renderGroupsList === 'function') window.renderGroupsList();
-      if (typeof window.renderStudentsList === 'function') window.renderStudentsList();
-      if (typeof window.renderCalendar === 'function') window.renderCalendar();
-      if (typeof window.updatePendingBadge === 'function') window.updatePendingBadge();
+      try { if (typeof window.renderHome === 'function') window.renderHome(); } catch (e) {}
+      try { if (typeof window.renderGroupsList === 'function') window.renderGroupsList(); } catch (e) {}
+      try { if (typeof window.renderStudentsList === 'function') window.renderStudentsList(); } catch (e) {}
+      try { if (typeof window.renderCalendar === 'function') window.renderCalendar(); } catch (e) {}
+      try { if (typeof window.updatePendingBadge === 'function') window.updatePendingBadge(); } catch (e) {}
     }
 
-    if (!silent) showNotify('✅ تم سحب البيانات بنجاح!');
+    if (!isSilent) showNotify('✅ تم سحب البيانات بنجاح!');
     return true;
 
   } catch (error) {
     console.error('Download error:', error);
-    if (!silent) showNotify('❌ فشل سحب البيانات: ' + error.message);
+    if (!isSilent) showNotify('❌ فشل سحب البيانات: ' + error.message);
     return false;
   }
 }
@@ -1086,7 +1202,6 @@ export async function handleLogout() {
   if (typeof window !== 'undefined') window.currentUser = null;
   if (typeof teardownRealtimeSync === 'function') teardownRealtimeSync();
 
-  // مسح البيانات المحلية وإعادة التحميل
   await clearLocalData();
   localStorage.clear();
   sessionStorage.clear();
