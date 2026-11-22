@@ -779,186 +779,11 @@ export function refreshConstantsUI(ownerType, ownerId){
   if(c){ c.innerHTML = renderConstants(ownerType, ownerId); hydrateIcons(c); }
 }
 
-/* ═══════════════ TABS & TRANSITIONS ═══════════════ */
-var MAIN_TAB_ORDER = ['home', 'lesson', 'calendar', 'library', 'settings'];
-
-function applyGpuLayerHints(el, includeOpacity){
-  if (!el) return;
-  el.style.willChange = includeOpacity ? 'transform, opacity' : 'transform';
-  el.style.backfaceVisibility = 'hidden';
-  el.style.webkitBackfaceVisibility = 'hidden';
-  el.style.perspective = '1000px';
-}
-
-function clearSlideAnimation(el){
-  if (!el) return;
-  if (el._slideRaf) {
-    cancelAnimationFrame(el._slideRaf);
-    el._slideRaf = 0;
-  }
-  if (el._slideTimer) {
-    clearTimeout(el._slideTimer);
-    el._slideTimer = 0;
-  }
-  if (el._slideEndHandler) {
-    el.removeEventListener('transitionend', el._slideEndHandler);
-    el._slideEndHandler = null;
-  }
-  el.classList.remove('tab-sliding', 'cal-sliding', 'slide-from-left', 'slide-from-right');
-  el.style.animation = '';
-  el.style.transition = '';
-  el.style.transform = '';
-  el.style.opacity = '';
-  el.style.willChange = '';
-  el.style.backfaceVisibility = '';
-  el.style.webkitBackfaceVisibility = '';
-  el.style.perspective = '';
-  if (el._slideClipParent && el._slideClipPrev !== undefined) {
-    el._slideClipParent.style.overflowX = el._slideClipPrev;
-    el._slideClipParent = null;
-    el._slideClipPrev = undefined;
-  }
-}
-
-function setClipParentForSlide(el){
-  var parent = el ? el.parentElement : null;
-  if (!parent) return;
-  if (!el._slideClipParent) {
-    el._slideClipParent = parent;
-    el._slideClipPrev = parent.style.overflowX;
-    parent.style.overflowX = 'clip';
-  }
-}
-
-function animateSlideElement(el, dir, options){
-  if (!el || !dir) return;
-  clearSlideAnimation(el);
-
-  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    return;
-  }
-
-  var opts = options || {};
-  var distance = opts.distance || 44;
-  var duration = opts.duration || 210;
-  var startOpacity = (typeof opts.startOpacity === 'number') ? opts.startOpacity : 0.2;
-  var extraClass = opts.extraClass || 'tab-sliding';
-  // dir > 0 (next / right drag): enters from left (-distance -> 0) moving rightward with finger
-  // dir < 0 (prev / left drag): enters from right (+distance -> 0) moving leftward with finger
-  var startOffset = dir > 0 ? -distance : distance;
-  var dirClass = dir > 0 ? 'slide-from-left' : 'slide-from-right';
-
-  setClipParentForSlide(el);
-
-  el.classList.add(extraClass, dirClass);
-  el.style.animation = 'none';
-  el.style.transition = 'none';
-  applyGpuLayerHints(el, true);
-  el.style.transform = 'translate3d(' + startOffset + 'px, 0, 0)';
-  el.style.opacity = String(startOpacity);
-
-  void el.offsetWidth;
-
-  var done = false;
-  var finish = function(){
-    if (done) return;
-    done = true;
-    clearSlideAnimation(el);
-  };
-
-  el._slideEndHandler = function(e){
-    if (e.target === el && (e.propertyName === 'transform' || e.propertyName === 'opacity')) {
-      finish();
-    }
-  };
-  el.addEventListener('transitionend', el._slideEndHandler);
-  el._slideTimer = setTimeout(finish, duration + 60);
-
-  el._slideRaf = requestAnimationFrame(function(){
-    el._slideRaf = 0;
-    if (done) return;
-    el.style.transition = 'transform ' + duration + 'ms cubic-bezier(0.22, 1, 0.36, 1), opacity ' + duration + 'ms ease';
-    el.style.transform = 'translate3d(0, 0, 0)';
-    el.style.opacity = '1';
-  });
-}
-
-function springBackElement(el){
-  if (!el) return;
-  if (el._slideRaf) {
-    cancelAnimationFrame(el._slideRaf);
-    el._slideRaf = 0;
-  }
-  if (el._slideTimer) {
-    clearTimeout(el._slideTimer);
-    el._slideTimer = 0;
-  }
-  if (el._slideEndHandler) {
-    el.removeEventListener('transitionend', el._slideEndHandler);
-    el._slideEndHandler = null;
-  }
-
-  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    clearSlideAnimation(el);
-    return;
-  }
-
-  var duration = 200;
-  var done = false;
-  var finish = function(){
-    if (done) return;
-    done = true;
-    clearSlideAnimation(el);
-  };
-
-  el._slideEndHandler = function(e){
-    if (e.target === el && e.propertyName === 'transform') {
-      finish();
-    }
-  };
-  el.addEventListener('transitionend', el._slideEndHandler);
-  el._slideTimer = setTimeout(finish, duration + 60);
-
-  applyGpuLayerHints(el, false);
-  el.style.transition = 'transform ' + duration + 'ms cubic-bezier(0.22, 1, 0.36, 1)';
-  el.style.transform = 'translate3d(0, 0, 0)';
-}
-
-function getTabSlideDirection(prevTab, nextTab){
-  var prevIdx = MAIN_TAB_ORDER.indexOf(prevTab);
-  var nextIdx = MAIN_TAB_ORDER.indexOf(nextTab);
-  if (prevIdx === -1 || nextIdx === -1 || prevIdx === nextIdx) return 0;
-  return nextIdx > prevIdx ? 1 : -1;
-}
-
-function animateTabPanelSlide(panel, dir){
-  animateSlideElement(panel, dir, {
-    distance: 44,
-    duration: 210,
-    startOpacity: 0.15,
-    extraClass: 'tab-sliding'
-  });
-}
-
-function animateCalendarBodySlide(dir){
-  var body = (typeof document !== 'undefined') ? document.getElementById('calendarBody') : null;
-  if (!body) return;
-  animateSlideElement(body, dir, {
-    distance: 40,
-    duration: 210,
-    startOpacity: 0.25,
-    extraClass: 'cal-sliding'
-  });
-}
-
-export function switchTab(name, slideDir){
-  var prevTab = _currentMainTab;
+/* ═══════════════ TABS ═══════════════ */
+export function switchTab(name){
   if (name !== 'home' && _currentMainTab === 'home') pushAppNavState('tab-' + name);
   _currentMainTab = name;
-  document.querySelectorAll('.tab-panel').forEach(function(p){
-    clearSlideAnimation(p);
-    p.classList.remove('active');
-  });
+  document.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.remove('active'); });
   document.querySelectorAll('.tab-btn[data-tab]').forEach(function(b){ b.classList.toggle('active', b.dataset.tab === name); });
   var panel = document.getElementById('tab-' + name);
   if(panel) panel.classList.add('active');
@@ -1039,13 +864,6 @@ export function switchTab(name, slideDir){
     renderSettingsFavs();
   }
   updatePendingBadge();
-
-  if (panel && prevTab && prevTab !== name) {
-    var dir = (typeof slideDir === 'number' && slideDir !== 0) ? slideDir : getTabSlideDirection(prevTab, name);
-    if (dir !== 0) {
-      animateTabPanelSlide(panel, dir);
-    }
-  }
 }
 
 export function switchLibSub(sub){
@@ -5703,14 +5521,11 @@ window.addEventListener('beforeunload', function(e){
   }
 });
 
-/* ═══════════════ TOUCH SWIPE NAVIGATION (RTL DRAG-TO-SLIDE) ═══════════════ */
+/* ═══════════════ TOUCH SWIPE NAVIGATION (INSTANT SNAP) ═══════════════ */
 var _swipeListenersBound = false;
 var _swipeState = null;
-var SWIPE_LOCK_THRESHOLD = 10;
-var SWIPE_MIN_VELOCITY = 0.45;
-var SWIPE_VELOCITY_MIN_DIST = 36;
-var SWIPE_DISTANCE_RATIO = 0.25;
-var SWIPE_MIN_DISTANCE = 60;
+var MAIN_TAB_ORDER = ['home', 'lesson', 'calendar', 'library', 'settings'];
+var SWIPE_THRESHOLD_X = 50;
 
 function isOverlayVisible(el){
   if (!el) return false;
@@ -5775,9 +5590,6 @@ export function setupTouchSwipeGestures(){
 
   document.addEventListener('touchstart', function(e){
     if (!e.touches || e.touches.length !== 1) {
-      if (_swipeState && _swipeState.axisLocked === 'x' && _swipeState.dragEl) {
-        springBackElement(_swipeState.dragEl);
-      }
       _swipeState = null;
       return;
     }
@@ -5791,81 +5603,15 @@ export function setupTouchSwipeGestures(){
       return;
     }
 
-    var activeTab = getActiveMainTabId();
-    var isCalendarSwipe = (activeTab === 'calendar') && Boolean(target.closest('.cal-grid, .cal-weekly, .cal-list, #calendarBody'));
-    var dragEl = isCalendarSwipe
-      ? document.getElementById('calendarBody')
-      : document.getElementById('tab-' + activeTab);
-
-    if (!dragEl) {
-      _swipeState = null;
-      return;
-    }
-
     var touch = e.touches[0];
-    var now = Date.now();
     _swipeState = {
       startX: touch.clientX,
       startY: touch.clientY,
-      lastX: touch.clientX,
-      startTime: now,
-      lastTime: now,
-      target: target,
-      activeTab: activeTab,
-      isCalendarSwipe: isCalendarSwipe,
-      dragEl: dragEl,
-      axisLocked: null,
-      canceled: false,
-      deltaX: 0
+      target: target
     };
   }, { passive: true });
 
-  document.addEventListener('touchmove', function(e){
-    if (!_swipeState || _swipeState.canceled) return;
-    if (!e.touches || e.touches.length !== 1) {
-      if (_swipeState.axisLocked === 'x' && _swipeState.dragEl) {
-        springBackElement(_swipeState.dragEl);
-      }
-      _swipeState.canceled = true;
-      return;
-    }
-
-    var touch = e.touches[0];
-    var dx = touch.clientX - _swipeState.startX;
-    var dy = touch.clientY - _swipeState.startY;
-    var absDx = Math.abs(dx);
-    var absDy = Math.abs(dy);
-
-    if (_swipeState.axisLocked === null) {
-      if (absDy > SWIPE_LOCK_THRESHOLD && absDy >= absDx) {
-        _swipeState.canceled = true;
-        return;
-      }
-      if (absDx > SWIPE_LOCK_THRESHOLD && absDx > absDy * 1.15) {
-        _swipeState.axisLocked = 'x';
-        clearSlideAnimation(_swipeState.dragEl);
-        setClipParentForSlide(_swipeState.dragEl);
-        _swipeState.dragEl.style.animation = 'none';
-        _swipeState.dragEl.style.transition = 'none';
-        applyGpuLayerHints(_swipeState.dragEl, false);
-      } else {
-        return;
-      }
-    }
-
-    if (_swipeState.axisLocked === 'x') {
-      if (e.cancelable) e.preventDefault();
-      _swipeState.lastX = touch.clientX;
-      _swipeState.lastTime = Date.now();
-      _swipeState.deltaX = dx;
-      _swipeState.dragEl.style.transform = 'translate3d(' + dx.toFixed(1) + 'px, 0, 0)';
-    }
-  }, { passive: false });
-
   document.addEventListener('touchcancel', function(){
-    if (_swipeState && _swipeState.axisLocked === 'x' && _swipeState.dragEl) {
-      springBackElement(_swipeState.dragEl);
-    }
     _swipeState = null;
   }, { passive: true });
 
@@ -5874,49 +5620,37 @@ export function setupTouchSwipeGestures(){
     var st = _swipeState;
     _swipeState = null;
 
-    if (st.canceled || st.axisLocked !== 'x' || !st.dragEl) return;
+    if (shouldIgnoreSwipe(st.target)) return;
+    if (!e.changedTouches || e.changedTouches.length !== 1) return;
 
-    if (shouldIgnoreSwipe(st.target)) {
-      springBackElement(st.dragEl);
-      return;
-    }
+    var touch = e.changedTouches[0];
+    var deltaX = touch.clientX - st.startX;
+    var deltaY = touch.clientY - st.startY;
 
-    var touch = (e.changedTouches && e.changedTouches.length) ? e.changedTouches[0] : null;
-    var deltaX = touch ? (touch.clientX - st.startX) : st.deltaX;
-    var elapsed = Math.max(1, Date.now() - st.startTime);
-    var velocity = Math.abs(deltaX) / elapsed;
-    var viewportWidth = (typeof window !== 'undefined' && window.innerWidth) ? window.innerWidth : 390;
-    var distThreshold = Math.max(SWIPE_MIN_DISTANCE, Math.round(viewportWidth * SWIPE_DISTANCE_RATIO));
-    var passedDist = Math.abs(deltaX) >= distThreshold;
-    var passedVel = (velocity >= SWIPE_MIN_VELOCITY) && (Math.abs(deltaX) >= SWIPE_VELOCITY_MIN_DIST);
+    if (Math.abs(deltaX) <= SWIPE_THRESHOLD_X) return;
+    if (Math.abs(deltaX) <= Math.abs(deltaY)) return;
 
-    if (!passedDist && !passedVel) {
-      springBackElement(st.dragEl);
-      return;
-    }
+    var activeTab = getActiveMainTabId();
+    var isCalendarSwipe = (activeTab === 'calendar') && st.target && Boolean(st.target.closest('.cal-grid, .cal-weekly, .cal-list, #calendarBody'));
 
-    if (st.isCalendarSwipe) {
-      clearSlideAnimation(st.dragEl);
-      if (deltaX > 0) {
+    if (isCalendarSwipe) {
+      if (deltaX > SWIPE_THRESHOLD_X) {
         calendarNavigate(1);
-        animateCalendarBodySlide(1);
-      } else {
+      } else if (deltaX < -SWIPE_THRESHOLD_X) {
         calendarNavigate(-1);
-        animateCalendarBodySlide(-1);
       }
       return;
     }
 
-    clearSlideAnimation(st.dragEl);
-    var curIdx = MAIN_TAB_ORDER.indexOf(st.activeTab);
+    var curIdx = MAIN_TAB_ORDER.indexOf(activeTab);
     if (curIdx === -1) curIdx = 0;
 
-    if (deltaX > 0) {
+    if (deltaX > SWIPE_THRESHOLD_X) {
       var nextIdx = (curIdx + 1) % MAIN_TAB_ORDER.length;
-      switchTab(MAIN_TAB_ORDER[nextIdx], 1);
-    } else {
+      switchTab(MAIN_TAB_ORDER[nextIdx]);
+    } else if (deltaX < -SWIPE_THRESHOLD_X) {
       var prevIdx = (curIdx - 1 + MAIN_TAB_ORDER.length) % MAIN_TAB_ORDER.length;
-      switchTab(MAIN_TAB_ORDER[prevIdx], -1);
+      switchTab(MAIN_TAB_ORDER[prevIdx]);
     }
   }, { passive: true });
 }
