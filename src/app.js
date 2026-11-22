@@ -5521,6 +5521,132 @@ window.addEventListener('beforeunload', function(e){
   }
 });
 
+/* ═══════════════ TOUCH SWIPE NAVIGATION (RTL) ═══════════════ */
+var _swipeListenersBound = false;
+var _swipeState = null;
+var MAIN_TAB_ORDER = ['home', 'lesson', 'calendar', 'library', 'settings'];
+var SWIPE_MIN_X = 60;
+var SWIPE_MAX_Y = 40;
+
+function isOverlayVisible(el){
+  if (!el) return false;
+  if (el.style && el.style.display === 'none') return false;
+  var cs = (typeof window.getComputedStyle === 'function') ? window.getComputedStyle(el) : null;
+  return cs ? cs.display !== 'none' : (el.style && el.style.display !== 'none');
+}
+
+function shouldIgnoreSwipe(target){
+  if (typeof document === 'undefined') return true;
+  if (document.querySelector('.modal-overlay.active')) return true;
+  if (document.querySelector('.bottom-sheet.open')) return true;
+  if (isOverlayVisible(document.getElementById('browserOverlay'))) return true;
+  if (isOverlayVisible(document.getElementById('authOverlay'))) return true;
+  if (!target || typeof target.closest !== 'function') return true;
+
+  var tag = target.tagName || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (target.isContentEditable) return true;
+  if (target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) return true;
+  if (target.closest('.surah-dropdown')) return true;
+  if (target.closest('.lib-subtabs, .settings-sub-tabs, .browser-tabs-scroll, .tab-nav-desktop, .browser-bookmarks-bar')) return true;
+  if (target.closest('.modal-overlay.active, .bottom-sheet.open, #browserOverlay, #authOverlay')) return true;
+
+  return false;
+}
+
+function getActiveMainTabId(){
+  var activePanel = document.querySelector('.tab-panel.active');
+  if (activePanel && activePanel.id && activePanel.id.indexOf('tab-') === 0) {
+    return activePanel.id.slice(4);
+  }
+  return _currentMainTab || 'home';
+}
+
+export function setupTouchSwipeGestures(){
+  if (_swipeListenersBound || typeof document === 'undefined') return;
+  _swipeListenersBound = true;
+
+  document.addEventListener('touchstart', function(e){
+    if (!e.touches || e.touches.length !== 1) {
+      _swipeState = null;
+      return;
+    }
+    var rawTarget = e.target;
+    var target = (rawTarget && rawTarget.nodeType === 1)
+      ? rawTarget
+      : (rawTarget && rawTarget.parentElement ? rawTarget.parentElement : null);
+
+    if (shouldIgnoreSwipe(target)) {
+      _swipeState = null;
+      return;
+    }
+
+    var touch = e.touches[0];
+    _swipeState = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      target: target,
+      canceled: false
+    };
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function(e){
+    if (!_swipeState || _swipeState.canceled) return;
+    if (!e.touches || e.touches.length !== 1) {
+      _swipeState.canceled = true;
+      return;
+    }
+    var dy = Math.abs(e.touches[0].clientY - _swipeState.startY);
+    if (dy > SWIPE_MAX_Y) {
+      _swipeState.canceled = true;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchcancel', function(){
+    _swipeState = null;
+  }, { passive: true });
+
+  document.addEventListener('touchend', function(e){
+    if (!_swipeState) return;
+    var st = _swipeState;
+    _swipeState = null;
+
+    if (st.canceled || shouldIgnoreSwipe(st.target)) return;
+    if (!e.changedTouches || e.changedTouches.length !== 1) return;
+
+    var touch = e.changedTouches[0];
+    var deltaX = touch.clientX - st.startX;
+    var deltaY = touch.clientY - st.startY;
+
+    if (Math.abs(deltaX) < SWIPE_MIN_X) return;
+    if (Math.abs(deltaY) > SWIPE_MAX_Y) return;
+    if (Math.abs(deltaX) <= Math.abs(deltaY) * 1.2) return;
+
+    var activeTab = getActiveMainTabId();
+    var isCalendarSwipe = (activeTab === 'calendar') && st.target && Boolean(st.target.closest('.cal-grid, .cal-weekly, .cal-list, #calendarBody'));
+
+    if (isCalendarSwipe) {
+      if (deltaX < -SWIPE_MIN_X) {
+        calendarNavigate(1);
+      } else if (deltaX > SWIPE_MIN_X) {
+        calendarNavigate(-1);
+      }
+      return;
+    }
+
+    var curIdx = MAIN_TAB_ORDER.indexOf(activeTab);
+    if (curIdx === -1) curIdx = 0;
+
+    if (deltaX < -SWIPE_MIN_X) {
+      var nextIdx = (curIdx + 1) % MAIN_TAB_ORDER.length;
+      switchTab(MAIN_TAB_ORDER[nextIdx]);
+    } else if (deltaX > SWIPE_MIN_X) {
+      var prevIdx = (curIdx - 1 + MAIN_TAB_ORDER.length) % MAIN_TAB_ORDER.length;
+      switchTab(MAIN_TAB_ORDER[prevIdx]);
+    }
+  }, { passive: true });
+}
+
 /* ═══════════════ INIT ═══════════════ */
 export async function initApp(){
   try {
@@ -5554,6 +5680,7 @@ export async function initApp(){
     if (stTz) stTz.value = data.settings.teacherTimezone || '';
     setupAutoSave();
     setupGlobalClick();
+    setupTouchSwipeGestures();
     updateLastBackupInfo();
     renderGroupsList();
     renderStudentsList();
@@ -5999,6 +6126,7 @@ if (typeof window !== 'undefined') {
   handleFolderImport,
   parseFolderFile,
   showKeyboardShortcuts,
+  setupTouchSwipeGestures,
   initApp,
   normalizeUrl,
   openStudentPicker,
