@@ -4969,6 +4969,13 @@ export function exportICS(months){
 }
 
 /* ═══════════════ WORK STATS ═══════════════ */
+export var workStatsDate = new Date();
+
+export function formatDecimalHours(minutes){
+  var m = parseFloat(minutes) || 0;
+  return (m / 60).toFixed(2) + ' ساعة';
+}
+
 export function getWorkStats(locFilter){
   var now = new Date();
   var tS = new Date(now); tS.setHours(0,0,0,0);
@@ -5005,36 +5012,264 @@ export function getWorkStatsByLocation(){
   return r;
 }
 
+function analyzeSessionAttendance(session){
+  var students = (session && session.data && Array.isArray(session.data.students))
+    ? session.data.students
+    : [];
+  if (!students.length) {
+    return { isFullAbsence: false, absentNames: [] };
+  }
+  var absentNames = [];
+  var presentCount = 0;
+  students.forEach(function(st, idx){
+    if (!st) return;
+    if (st.attendance === 'present') {
+      presentCount++;
+    } else {
+      var nm = (st.name || '').trim();
+      absentNames.push(nm || ('طالب ' + (idx + 1)));
+    }
+  });
+  var isFullAbsence = (presentCount === 0 && absentNames.length > 0);
+  return {
+    isFullAbsence: isFullAbsence,
+    absentNames: isFullAbsence ? [] : absentNames
+  };
+}
+
+function formatFullAbsenceSummaryNote(count){
+  if (!count || count < 1) return '';
+  if (count === 1) return ' · منها حصة واحدة غياب كامل';
+  if (count === 2) return ' · منها حصتان غياب كامل';
+  if (count <= 10) return ' · منها ' + count + ' حصص غياب كامل';
+  return ' · منها ' + count + ' حصة غياب كامل';
+}
+
+export function renderWorkStatsModalBody(){
+  var year = workStatsDate.getFullYear();
+  var month = workStatsDate.getMonth();
+  var monthNames = window.MONTH_NAMES || ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  var ymPrefix = year + '-' + String(month + 1).padStart(2, '0');
+
+  var now = new Date();
+  var isCurrentMonth = (year === now.getFullYear() && month === now.getMonth());
+
+  var monthSessions = (data.sessions || []).filter(function(s){
+    return s && typeof s.date === 'string' && s.date.slice(0, 7) === ymPrefix;
+  });
+
+  var totalMinutes = 0;
+  var fullAbsenceCount = 0;
+  var knownLocs = Array.isArray(data.settings && data.settings.workLocations) ? data.settings.workLocations.slice() : [];
+  var locBuckets = {};
+
+  monthSessions.forEach(function(s){
+    var dur = Math.max(0, parseInt(s.duration, 10) || 0);
+    totalMinutes += dur;
+
+    var att = analyzeSessionAttendance(s);
+    if (att.isFullAbsence) fullAbsenceCount++;
+
+    var grp = (data.groups || []).find(function(x){ return x.id === s.groupId; });
+    var rawLoc = grp && grp.location ? String(grp.location).trim() : '';
+    var locKey = rawLoc ? rawLoc : '__none__';
+
+    if (!locBuckets[locKey]) {
+      locBuckets[locKey] = {
+        key: locKey,
+        label: locKey === '__none__' ? 'مجموعات خاصة / بدون مكان محدد' : locKey,
+        totalMinutes: 0,
+        groups: {}
+      };
+    }
+    locBuckets[locKey].totalMinutes += dur;
+
+    var grpKey = grp ? grp.id : ('__orphan_' + (s.groupId || 'unknown'));
+    var grpName = grp ? grp.name : ((s.data && s.data.group) ? s.data.group : 'مجموعة محذوفة');
+
+    if (!locBuckets[locKey].groups[grpKey]) {
+      locBuckets[locKey].groups[grpKey] = {
+        id: grpKey,
+        name: grpName,
+        totalMinutes: 0,
+        sessions: []
+      };
+    }
+    locBuckets[locKey].groups[grpKey].totalMinutes += dur;
+    locBuckets[locKey].groups[grpKey].sessions.push({
+      session: s,
+      duration: dur,
+      attendance: att
+    });
+  });
+
+  // 1) شريط التنقل بين الشهور
+  var navHtml = ''
+    + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;background:var(--card-secondary-bg);border:1px solid var(--card-border);border-radius:12px;padding:8px 10px;margin-bottom:14px">'
+    +   '<div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">'
+    +     '<button type="button" class="btn btn-secondary btn-sm" onclick="changeWorkStatsMonth(-1)" title="الشهر السابق" style="padding:6px 10px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap">'
+    +       svgIcon('chevron-right', 14) + '<span>السابق</span>'
+    +     '</button>'
+    +     '<div style="flex:1;text-align:center;font-weight:700;font-size:.95rem;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+    +       escapeHtml(monthNames[month] + ' ' + year)
+    +     '</div>'
+    +     '<button type="button" class="btn btn-secondary btn-sm" onclick="changeWorkStatsMonth(1)" title="الشهر التالي" style="padding:6px 10px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap">'
+    +       '<span>التالي</span>' + svgIcon('chevron-left', 14)
+    +     '</button>'
+    +   '</div>'
+    +   '<button type="button" class="btn btn-sm ' + (isCurrentMonth ? 'btn-secondary' : 'btn-primary') + '" onclick="goToCurrentWorkStatsMonth()" ' + (isCurrentMonth ? 'disabled style="opacity:.6;padding:6px 10px;white-space:nowrap;width:auto;margin:0"' : 'style="padding:6px 10px;white-space:nowrap;width:auto;margin:0"') + '>'
+    +     'هذا الشهر'
+    +   '</button>'
+    + '</div>';
+
+  // 2) بطاقة الملخص البارزة للشهر المحدد
+  var secondarySummary = 'إجمالي الحصص: ' + monthSessions.length + ' حصة' + formatFullAbsenceSummaryNote(fullAbsenceCount);
+  var overviewHtml = ''
+    + '<div style="background:linear-gradient(135deg, var(--primary-soft), var(--card-secondary-bg));border:1px solid var(--primary-ring);border-radius:14px;padding:16px;margin-bottom:16px;text-align:center">'
+    +   '<div style="font-size:.8rem;color:var(--text-secondary);margin-bottom:4px;font-weight:600">إجمالي ساعات العمل في ' + escapeHtml(monthNames[month] + ' ' + year) + '</div>'
+    +   '<div style="font-size:1.75rem;font-weight:800;color:var(--accent-green);line-height:1.25;font-variant-numeric:tabular-nums">' + escapeHtml(formatDecimalHours(totalMinutes)) + '</div>'
+    +   '<div style="margin-top:8px;font-size:.82rem;color:var(--text-secondary);display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap">'
+    +     svgIcon('calendar-days', 14) + '<span>' + escapeHtml(secondarySummary) + '</span>'
+    +   '</div>'
+    + '</div>';
+
+  // 3) الترتيب الهرمي: أماكن العمل ← المجموعات ← سجل الحصص
+  var orderedLocKeys = [];
+  knownLocs.forEach(function(loc){
+    var trimmed = String(loc || '').trim();
+    if (trimmed && locBuckets[trimmed] && orderedLocKeys.indexOf(trimmed) === -1) {
+      orderedLocKeys.push(trimmed);
+    }
+  });
+  Object.keys(locBuckets).forEach(function(k){
+    if (k !== '__none__' && orderedLocKeys.indexOf(k) === -1) {
+      orderedLocKeys.push(k);
+    }
+  });
+  if (locBuckets['__none__']) {
+    orderedLocKeys.push('__none__');
+  }
+
+  var hierarchyHtml = '';
+  if (!orderedLocKeys.length) {
+    hierarchyHtml = ''
+      + '<div style="text-align:center;padding:28px 16px;background:var(--card-secondary-bg);border:1px dashed var(--card-border-strong);border-radius:12px;color:var(--text-muted)">'
+      +   '<div style="margin-bottom:8px;opacity:.75">' + svgIcon('calendar-days', 28) + '</div>'
+      +   '<div style="font-weight:700;font-size:.92rem;color:var(--text-secondary);margin-bottom:4px">لا توجد حصص مسجلة في هذا الشهر</div>'
+      +   '<div style="font-size:.8rem">جرّب الانتقال إلى شهر آخر من الشريط بالأعلى</div>'
+      + '</div>';
+  } else {
+    orderedLocKeys.forEach(function(locKey){
+      var bucket = locBuckets[locKey];
+      var groupList = Object.keys(bucket.groups).map(function(gid){ return bucket.groups[gid]; });
+      groupList.sort(function(a, b){
+        return (b.totalMinutes - a.totalMinutes) || (a.name || '').localeCompare(b.name || '', 'ar');
+      });
+
+      var groupsHtml = '';
+      groupList.forEach(function(grp){
+        grp.sessions.sort(function(a, b){
+          var da = (a.session.date || '');
+          var db = (b.session.date || '');
+          if (da !== db) return da.localeCompare(db);
+          return (a.session.time || '').localeCompare(b.session.time || '');
+        });
+
+        var sessionsHtml = '';
+        grp.sessions.forEach(function(entry){
+          var ses = entry.session;
+          var df = ses.date ? ses.date.split('-').reverse().join('/') : '—';
+          var rawLesson = ses.lessonNumber || (ses.data && ses.data.lesson) || '';
+          var lessonLabel = rawLesson
+            ? (String(rawLesson).indexOf('حصة') !== -1 || String(rawLesson).indexOf('الحصة') !== -1 ? String(rawLesson) : ('الحصة ' + rawLesson))
+            : 'حصة';
+
+          var badgeHtml = '';
+          var rowBg = 'var(--card-bg)';
+          var rowBorder = 'var(--card-border)';
+
+          if (entry.attendance.isFullAbsence) {
+            rowBg = 'var(--warning-bg)';
+            rowBorder = 'rgba(251, 191, 36, 0.35)';
+            badgeHtml = '<span style="font-size:.73rem;font-weight:700;color:var(--accent-amber);background:rgba(251, 191, 36, 0.14);border:1px solid rgba(251, 191, 36, 0.35);border-radius:6px;padding:2px 7px;white-space:nowrap">(حصة غياب كامل)</span>';
+          } else if (entry.attendance.absentNames.length > 0) {
+            badgeHtml = '<span style="font-size:.74rem;color:var(--text-muted)">(غياب: ' + escapeHtml(entry.attendance.absentNames.join('، ')) + ')</span>';
+          }
+
+          sessionsHtml += ''
+            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:7px 10px;background:' + rowBg + ';border:1px solid ' + rowBorder + ';border-radius:8px;font-size:.8rem">'
+            +   '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0">'
+            +     '<span style="color:var(--text-secondary);font-weight:600;font-variant-numeric:tabular-nums">' + escapeHtml(df) + '</span>'
+            +     '<span style="color:var(--text-primary);font-weight:600">' + escapeHtml(lessonLabel) + '</span>'
+            +     badgeHtml
+            +   '</div>'
+            +   '<span style="font-weight:700;color:var(--accent-green);font-variant-numeric:tabular-nums;white-space:nowrap">' + escapeHtml(formatDecimalHours(entry.duration)) + '</span>'
+            + '</div>';
+        });
+
+        groupsHtml += ''
+          + '<div style="background:var(--bg-primary);border:1px solid var(--card-border);border-radius:10px;padding:10px 12px">'
+          +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">'
+          +     '<div style="font-weight:700;font-size:.88rem;color:var(--text-primary)">' + escapeHtml(grp.name) + '</div>'
+          +     '<div style="display:flex;align-items:center;gap:8px">'
+          +       '<span style="font-size:.74rem;color:var(--text-muted)">' + grp.sessions.length + ' حصة</span>'
+          +       '<span style="font-weight:700;font-size:.86rem;color:var(--accent-green);font-variant-numeric:tabular-nums">' + escapeHtml(formatDecimalHours(grp.totalMinutes)) + '</span>'
+          +     '</div>'
+          +   '</div>'
+          +   '<details style="margin-top:8px">'
+          +     '<summary style="cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:5px;font-size:.77rem;color:var(--text-secondary);font-weight:600;user-select:none">'
+          +       svgIcon('chevron-down', 13) + '<span>تفاصيل الحصص (' + grp.sessions.length + ')</span>'
+          +     '</summary>'
+          +     '<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--card-border)">'
+          +       sessionsHtml
+          +     '</div>'
+          +   '</details>'
+          + '</div>';
+      });
+
+      hierarchyHtml += ''
+        + '<div style="background:var(--card-secondary-bg);border:1px solid var(--card-border);border-radius:14px;padding:12px 14px;margin-bottom:12px">'
+        +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--card-border)">'
+        +     '<div style="display:flex;align-items:center;gap:7px;font-weight:700;font-size:.92rem;color:var(--text-primary)">'
+        +       svgIcon('building-2', 16) + '<span>' + escapeHtml(bucket.label) + '</span>'
+        +     '</div>'
+        +     '<span style="font-weight:800;font-size:.92rem;color:var(--accent-green);font-variant-numeric:tabular-nums;white-space:nowrap">' + escapeHtml(formatDecimalHours(bucket.totalMinutes)) + '</span>'
+        +   '</div>'
+        +   '<div style="display:flex;flex-direction:column;gap:8px">'
+        +     groupsHtml
+        +   '</div>'
+        + '</div>';
+    });
+  }
+
+  return navHtml + overviewHtml + hierarchyHtml;
+}
+
+export function changeWorkStatsMonth(delta){
+  var d = parseInt(delta, 10) || 0;
+  workStatsDate = new Date(workStatsDate.getFullYear(), workStatsDate.getMonth() + d, 1);
+  var bodyEl = document.getElementById('genericModalBody');
+  if (bodyEl) {
+    bodyEl.innerHTML = renderWorkStatsModalBody();
+    hydrateIcons(bodyEl);
+  }
+}
+
+export function goToCurrentWorkStatsMonth(){
+  var now = new Date();
+  workStatsDate = new Date(now.getFullYear(), now.getMonth(), 1);
+  var bodyEl = document.getElementById('genericModalBody');
+  if (bodyEl) {
+    bodyEl.innerHTML = renderWorkStatsModalBody();
+    hydrateIcons(bodyEl);
+  }
+}
+
 export function showWorkStatsModal(e){
   if(e) e.preventDefault();
-  var bl = getWorkStatsByLocation();
-  var s = bl._all;
-  var brkHtml = '';
-  var locs = (data.settings.workLocations || []).slice();
-  locs.push('__none__');
-  locs.forEach(function(l){
-    var st = bl.byLocation[l];
-    if(!st || st.total === 0) return;
-    var lbl = l === '__none__' ? 'بدون مكان' : l;
-    brkHtml += '<div class="cfg-row"><span style="display:flex;align-items:center;gap:6px">' + svgIcon('building-2', 14) + ' ' + escapeHtml(lbl) + '</span><span style="color:var(--accent-green);font-weight:700">' + formatDuration(st.total) + '</span></div>';
-  });
-  var recent = (data.sessions || []).slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||'') || (b.savedAt||'').localeCompare(a.savedAt||''); }).slice(0, 20);
-  var recHtml = '';
-  if(recent.length){
-    recHtml = '<div style="margin-top:20px"><h4 style="font-size:.92rem;margin:0 0 10px;color:var(--accent-green);font-weight:700;display:flex;align-items:center;gap:6px">' + svgIcon('list', 14) + ' آخر الحصص</h4>';
-    recent.forEach(function(s2){
-      var g = data.groups.find(function(x){ return x.id === s2.groupId; });
-      var df = s2.date ? s2.date.split('-').reverse().join('/') : '—';
-      recHtml += '<div class="cfg-row"><span style="color:var(--accent-green);display:flex;align-items:center;gap:5px">' + svgIcon('clock', 12) + ' ' + formatDuration(parseInt(s2.duration)||0) + '</span><span style="color:var(--text-muted);font-size:.75rem">' + escapeHtml(g?g.name:'—') + ' — ' + escapeHtml(df) + '</span></div>';
-    });
-    recHtml += '</div>';
-  } else recHtml = '<div class="cfg-empty">لا توجد حصص بعد</div>';
-  var body = '<div class="stats-row" style="margin-bottom:16px">'
-    + '<div class="stat-pill"><div class="stat-value">' + formatDuration(s.today) + '</div><div class="stat-label">اليوم</div></div>'
-    + '<div class="stat-pill"><div class="stat-value">' + formatDuration(s.week) + '</div><div class="stat-label">الأسبوع</div></div>'
-    + '<div class="stat-pill"><div class="stat-value">' + formatDuration(s.month) + '</div><div class="stat-label">الشهر</div></div>'
-    + '<div class="stat-pill"><div class="stat-value">' + formatDuration(s.total) + '</div><div class="stat-label">الإجمالي</div></div>'
-    + '</div>' + (brkHtml ? '<div style="margin-bottom:16px"><h4 style="font-size:.92rem;margin:0 0 8px;color:var(--accent-green);font-weight:700;display:flex;align-items:center;gap:6px">' + svgIcon('building-2', 14) + ' حسب المكان</h4>' + brkHtml + '</div>' : '') + recHtml;
+  var now = new Date();
+  workStatsDate = new Date(now.getFullYear(), now.getMonth(), 1);
+  var body = renderWorkStatsModalBody();
   openGenericModal('ساعات الحصص', body, '<button class="btn btn-secondary" onclick="closeGenericModal()">إغلاق</button>');
 }
 
@@ -5743,8 +5978,12 @@ if (typeof window !== 'undefined') {
   utcStamp,
   addMinutesToTimeHM,
   exportICS,
+  formatDecimalHours,
   getWorkStats,
   getWorkStatsByLocation,
+  renderWorkStatsModalBody,
+  changeWorkStatsMonth,
+  goToCurrentWorkStatsMonth,
   showWorkStatsModal,
   getTimerElapsedMs,
   toggleLessonTimer,
