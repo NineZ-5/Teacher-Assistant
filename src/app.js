@@ -779,11 +779,126 @@ export function refreshConstantsUI(ownerType, ownerId){
   if(c){ c.innerHTML = renderConstants(ownerType, ownerId); hydrateIcons(c); }
 }
 
-/* ═══════════════ TABS ═══════════════ */
-export function switchTab(name){
+/* ═══════════════ TABS & TRANSITIONS ═══════════════ */
+var MAIN_TAB_ORDER = ['home', 'lesson', 'calendar', 'library', 'settings'];
+
+function clearSlideAnimation(el){
+  if (!el) return;
+  if (el._slideRaf) {
+    cancelAnimationFrame(el._slideRaf);
+    el._slideRaf = 0;
+  }
+  if (el._slideTimer) {
+    clearTimeout(el._slideTimer);
+    el._slideTimer = 0;
+  }
+  if (el._slideEndHandler) {
+    el.removeEventListener('transitionend', el._slideEndHandler);
+    el._slideEndHandler = null;
+  }
+  el.classList.remove('tab-sliding', 'cal-sliding', 'slide-from-left', 'slide-from-right');
+  el.style.animation = '';
+  el.style.transition = '';
+  el.style.transform = '';
+  el.style.opacity = '';
+  el.style.willChange = '';
+  if (el._slideClipParent && el._slideClipPrev !== undefined) {
+    el._slideClipParent.style.overflowX = el._slideClipPrev;
+    el._slideClipParent = null;
+    el._slideClipPrev = undefined;
+  }
+}
+
+function animateSlideElement(el, dir, options){
+  if (!el || !dir) return;
+  clearSlideAnimation(el);
+
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    return;
+  }
+
+  var opts = options || {};
+  var distance = opts.distance || 28;
+  var duration = opts.duration || 200;
+  var startOpacity = (typeof opts.startOpacity === 'number') ? opts.startOpacity : 0;
+  var extraClass = opts.extraClass || 'tab-sliding';
+  var dirClass = dir > 0 ? 'slide-from-left' : 'slide-from-right';
+
+  var parent = el.parentElement;
+  if (parent) {
+    el._slideClipParent = parent;
+    el._slideClipPrev = parent.style.overflowX;
+    parent.style.overflowX = 'clip';
+  }
+
+  el.classList.add(extraClass, dirClass);
+  el.style.animation = 'none';
+  el.style.transition = 'none';
+  el.style.willChange = 'transform, opacity';
+  el.style.transform = 'translate3d(' + (dir > 0 ? '-' + distance + 'px' : distance + 'px') + ', 0, 0)';
+  el.style.opacity = String(startOpacity);
+
+  void el.offsetWidth;
+
+  var done = false;
+  var finish = function(){
+    if (done) return;
+    done = true;
+    clearSlideAnimation(el);
+  };
+
+  el._slideEndHandler = function(e){
+    if (e.target === el && (e.propertyName === 'transform' || e.propertyName === 'opacity')) {
+      finish();
+    }
+  };
+  el.addEventListener('transitionend', el._slideEndHandler);
+  el._slideTimer = setTimeout(finish, duration + 60);
+
+  el._slideRaf = requestAnimationFrame(function(){
+    el._slideRaf = 0;
+    if (done) return;
+    el.style.transition = 'transform ' + duration + 'ms cubic-bezier(0.22, 1, 0.36, 1), opacity ' + duration + 'ms ease';
+    el.style.transform = 'translate3d(0, 0, 0)';
+    el.style.opacity = '1';
+  });
+}
+
+function getTabSlideDirection(prevTab, nextTab){
+  var prevIdx = MAIN_TAB_ORDER.indexOf(prevTab);
+  var nextIdx = MAIN_TAB_ORDER.indexOf(nextTab);
+  if (prevIdx === -1 || nextIdx === -1 || prevIdx === nextIdx) return 0;
+  return nextIdx > prevIdx ? 1 : -1;
+}
+
+function animateTabPanelSlide(panel, dir){
+  animateSlideElement(panel, dir, {
+    distance: 28,
+    duration: 200,
+    startOpacity: 0,
+    extraClass: 'tab-sliding'
+  });
+}
+
+function animateCalendarBodySlide(dir){
+  var body = (typeof document !== 'undefined') ? document.getElementById('calendarBody') : null;
+  if (!body) return;
+  animateSlideElement(body, dir, {
+    distance: 24,
+    duration: 200,
+    startOpacity: 0.25,
+    extraClass: 'cal-sliding'
+  });
+}
+
+export function switchTab(name, slideDir){
+  var prevTab = _currentMainTab;
   if (name !== 'home' && _currentMainTab === 'home') pushAppNavState('tab-' + name);
   _currentMainTab = name;
-  document.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.remove('active'); });
+  document.querySelectorAll('.tab-panel').forEach(function(p){
+    clearSlideAnimation(p);
+    p.classList.remove('active');
+  });
   document.querySelectorAll('.tab-btn[data-tab]').forEach(function(b){ b.classList.toggle('active', b.dataset.tab === name); });
   var panel = document.getElementById('tab-' + name);
   if(panel) panel.classList.add('active');
@@ -864,6 +979,13 @@ export function switchTab(name){
     renderSettingsFavs();
   }
   updatePendingBadge();
+
+  if (panel && prevTab && prevTab !== name) {
+    var dir = (typeof slideDir === 'number' && slideDir !== 0) ? slideDir : getTabSlideDirection(prevTab, name);
+    if (dir !== 0) {
+      animateTabPanelSlide(panel, dir);
+    }
+  }
 }
 
 export function switchLibSub(sub){
@@ -5524,7 +5646,6 @@ window.addEventListener('beforeunload', function(e){
 /* ═══════════════ TOUCH SWIPE NAVIGATION (RTL) ═══════════════ */
 var _swipeListenersBound = false;
 var _swipeState = null;
-var MAIN_TAB_ORDER = ['home', 'lesson', 'calendar', 'library', 'settings'];
 var SWIPE_MIN_X = 60;
 var SWIPE_MAX_Y = 40;
 
@@ -5533,6 +5654,28 @@ function isOverlayVisible(el){
   if (el.style && el.style.display === 'none') return false;
   var cs = (typeof window.getComputedStyle === 'function') ? window.getComputedStyle(el) : null;
   return cs ? cs.display !== 'none' : (el.style && el.style.display !== 'none');
+}
+
+function hasHorizontalScrollAncestor(target){
+  var el = target;
+  while (el && el !== document.body && el !== document.documentElement) {
+    if (el.classList && (
+      el.classList.contains('tab-panel') ||
+      el.classList.contains('cal-grid') ||
+      el.classList.contains('cal-weekly') ||
+      el.classList.contains('cal-list')
+    )) {
+      break;
+    }
+    if (el.id === 'calendarBody') break;
+    if (el.scrollWidth > el.clientWidth + 2) {
+      var cs = (typeof window.getComputedStyle === 'function') ? window.getComputedStyle(el) : null;
+      var ox = cs ? cs.overflowX : '';
+      if (ox === 'auto' || ox === 'scroll') return true;
+    }
+    el = el.parentElement;
+  }
+  return false;
 }
 
 function shouldIgnoreSwipe(target){
@@ -5550,6 +5693,7 @@ function shouldIgnoreSwipe(target){
   if (target.closest('.surah-dropdown')) return true;
   if (target.closest('.lib-subtabs, .settings-sub-tabs, .browser-tabs-scroll, .tab-nav-desktop, .browser-bookmarks-bar')) return true;
   if (target.closest('.modal-overlay.active, .bottom-sheet.open, #browserOverlay, #authOverlay')) return true;
+  if (hasHorizontalScrollAncestor(target)) return true;
 
   return false;
 }
@@ -5626,10 +5770,12 @@ export function setupTouchSwipeGestures(){
     var isCalendarSwipe = (activeTab === 'calendar') && st.target && Boolean(st.target.closest('.cal-grid, .cal-weekly, .cal-list, #calendarBody'));
 
     if (isCalendarSwipe) {
-      if (deltaX < -SWIPE_MIN_X) {
-        calendarNavigate(1);
-      } else if (deltaX > SWIPE_MIN_X) {
+      if (deltaX > SWIPE_MIN_X) {
         calendarNavigate(-1);
+        animateCalendarBodySlide(-1);
+      } else if (deltaX < -SWIPE_MIN_X) {
+        calendarNavigate(1);
+        animateCalendarBodySlide(1);
       }
       return;
     }
@@ -5637,12 +5783,12 @@ export function setupTouchSwipeGestures(){
     var curIdx = MAIN_TAB_ORDER.indexOf(activeTab);
     if (curIdx === -1) curIdx = 0;
 
-    if (deltaX < -SWIPE_MIN_X) {
-      var nextIdx = (curIdx + 1) % MAIN_TAB_ORDER.length;
-      switchTab(MAIN_TAB_ORDER[nextIdx]);
-    } else if (deltaX > SWIPE_MIN_X) {
+    if (deltaX > SWIPE_MIN_X) {
       var prevIdx = (curIdx - 1 + MAIN_TAB_ORDER.length) % MAIN_TAB_ORDER.length;
-      switchTab(MAIN_TAB_ORDER[prevIdx]);
+      switchTab(MAIN_TAB_ORDER[prevIdx], -1);
+    } else if (deltaX < -SWIPE_MIN_X) {
+      var nextIdx = (curIdx + 1) % MAIN_TAB_ORDER.length;
+      switchTab(MAIN_TAB_ORDER[nextIdx], 1);
     }
   }, { passive: true });
 }
