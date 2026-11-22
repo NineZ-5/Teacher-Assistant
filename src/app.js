@@ -782,6 +782,14 @@ export function refreshConstantsUI(ownerType, ownerId){
 /* ═══════════════ TABS & TRANSITIONS ═══════════════ */
 var MAIN_TAB_ORDER = ['home', 'lesson', 'calendar', 'library', 'settings'];
 
+function applyGpuLayerHints(el, includeOpacity){
+  if (!el) return;
+  el.style.willChange = includeOpacity ? 'transform, opacity' : 'transform';
+  el.style.backfaceVisibility = 'hidden';
+  el.style.webkitBackfaceVisibility = 'hidden';
+  el.style.perspective = '1000px';
+}
+
 function clearSlideAnimation(el){
   if (!el) return;
   if (el._slideRaf) {
@@ -802,6 +810,9 @@ function clearSlideAnimation(el){
   el.style.transform = '';
   el.style.opacity = '';
   el.style.willChange = '';
+  el.style.backfaceVisibility = '';
+  el.style.webkitBackfaceVisibility = '';
+  el.style.perspective = '';
   if (el._slideClipParent && el._slideClipPrev !== undefined) {
     el._slideClipParent.style.overflowX = el._slideClipPrev;
     el._slideClipParent = null;
@@ -832,17 +843,17 @@ function animateSlideElement(el, dir, options){
   var duration = opts.duration || 210;
   var startOpacity = (typeof opts.startOpacity === 'number') ? opts.startOpacity : 0.2;
   var extraClass = opts.extraClass || 'tab-sliding';
-  // dir > 0 (next / left swipe): enters from right (+distance -> 0) moving leftward with finger
-  // dir < 0 (prev / right swipe): enters from left (-distance -> 0) moving rightward with finger
-  var startOffset = dir > 0 ? distance : -distance;
-  var dirClass = dir > 0 ? 'slide-from-right' : 'slide-from-left';
+  // dir > 0 (next / right drag): enters from left (-distance -> 0) moving rightward with finger
+  // dir < 0 (prev / left drag): enters from right (+distance -> 0) moving leftward with finger
+  var startOffset = dir > 0 ? -distance : distance;
+  var dirClass = dir > 0 ? 'slide-from-left' : 'slide-from-right';
 
   setClipParentForSlide(el);
 
   el.classList.add(extraClass, dirClass);
   el.style.animation = 'none';
   el.style.transition = 'none';
-  el.style.willChange = 'transform, opacity';
+  applyGpuLayerHints(el, true);
   el.style.transform = 'translate3d(' + startOffset + 'px, 0, 0)';
   el.style.opacity = String(startOpacity);
 
@@ -908,7 +919,7 @@ function springBackElement(el){
   el.addEventListener('transitionend', el._slideEndHandler);
   el._slideTimer = setTimeout(finish, duration + 60);
 
-  el.style.willChange = 'transform';
+  applyGpuLayerHints(el, false);
   el.style.transition = 'transform ' + duration + 'ms cubic-bezier(0.22, 1, 0.36, 1)';
   el.style.transform = 'translate3d(0, 0, 0)';
 }
@@ -5836,7 +5847,7 @@ export function setupTouchSwipeGestures(){
         setClipParentForSlide(_swipeState.dragEl);
         _swipeState.dragEl.style.animation = 'none';
         _swipeState.dragEl.style.transition = 'none';
-        _swipeState.dragEl.style.willChange = 'transform';
+        applyGpuLayerHints(_swipeState.dragEl, false);
       } else {
         return;
       }
@@ -5887,11 +5898,11 @@ export function setupTouchSwipeGestures(){
     if (st.isCalendarSwipe) {
       clearSlideAnimation(st.dragEl);
       if (deltaX > 0) {
-        calendarNavigate(-1);
-        animateCalendarBodySlide(-1);
-      } else {
         calendarNavigate(1);
         animateCalendarBodySlide(1);
+      } else {
+        calendarNavigate(-1);
+        animateCalendarBodySlide(-1);
       }
       return;
     }
@@ -5901,11 +5912,11 @@ export function setupTouchSwipeGestures(){
     if (curIdx === -1) curIdx = 0;
 
     if (deltaX > 0) {
-      var prevIdx = (curIdx - 1 + MAIN_TAB_ORDER.length) % MAIN_TAB_ORDER.length;
-      switchTab(MAIN_TAB_ORDER[prevIdx], -1);
-    } else {
       var nextIdx = (curIdx + 1) % MAIN_TAB_ORDER.length;
       switchTab(MAIN_TAB_ORDER[nextIdx], 1);
+    } else {
+      var prevIdx = (curIdx - 1 + MAIN_TAB_ORDER.length) % MAIN_TAB_ORDER.length;
+      switchTab(MAIN_TAB_ORDER[prevIdx], -1);
     }
   }, { passive: true });
 }
